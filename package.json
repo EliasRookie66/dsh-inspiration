@@ -1,0 +1,33 @@
+{
+  "name": "@ycx/dsh-inspiration",
+  "version": "0.1.0",
+  "description": "inspiration: a writing-first long-fiction workbench with author-approved AI drafts and precise selection polishing.",
+  "private": true,
+  "repository": { "type": "git", "url": "git+https://github.com/EliasRookie66/dsh-inspiration.git" },
+  "homepage": "https://github.com/EliasRookie66/dsh-inspiration#readme",
+  "bugs": { "url": "https://github.com/EliasRookie66/dsh-inspiration/issues" },
+  "keywords": ["dsh-plugin", "deepseek-harness", "fiction", "writing", "ai-writing"],
+  "type": "module",
+  "license": "MIT",
+  "engines": { "dsh": "0.2.2-rc.3", "node": ">=22" },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": ["index.js", "service.js", "model.js", "selection.js", "http.js", "core.js", "revision.js", "optimization.js", "client.js", "cordis.patch.yml", "locale", "icon.svg", "README.md", "REFERENCES.md", "LICENSE", "docs", "tests"],
+  "scripts": { "test": "node --test tests/*.test.js", "check": "node --check client.js && node --check index.js && node --check service.js && node --check model.js && node --check selection.js && node --check http.js && node --check core.js && node --check revision.js && node --check optimization.js" },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.3"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "inject": ["@deepseek-ai/dsh-client-ui-sidebar", "@deepseek-ai/dsh-client-ui-layout", "@deepseek-ai/dsh-client-locale"],
+      "platform": "web"
+    }
+  }
+}

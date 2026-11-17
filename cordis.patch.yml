@@ -1,0 +1,4 @@
+- insert:
+    - id: ycx-inspiration
+      name: '@ycx/dsh-inspiration'
+      config: {}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Inspiration",
+    "description": "Draft and continue with AI, edit manually, polish exact selections using a popup and result-first inline approval, or optimize a full chapter from author requirements with per-change approval; targeted optimization makes two model calls for analysis and rewriting. Preview proposals and explicitly accept them into the manuscript. Includes chapter-scoped confirmed canon, summary freshness, visible context manifests, revision history and JSON/Markdown export. Follows the DSH default or a separately selected writing model and available reasoning effort; sends selected novel content to that model's provider. Local single-author use only; character budgets are not exact token budgets. Story consistency and literary quality still require human review."
+  }
+}
