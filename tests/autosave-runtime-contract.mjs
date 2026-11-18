@@ -33,12 +33,14 @@ const mutants = {
   'auto-accept-candidate': () => mutateOnce('      return null;\n    }\n    function autosaveOperationApplied', "      if (dirty(w).candidate) return { kind: 'candidate', operation: { action: 'acceptProposal', proposalId: w.candidateId } };\n      return null;\n    }\n    function autosaveOperationApplied"),
   'drop-pending-undo-journal': () => mutateOnce('function autosaveRecoveryWorkspace(w, pending) {', 'function autosaveRecoveryWorkspace(w, pending) { return w;'),
   'regenerate-recovery-card-id': () => mutateOnce('if (!pendingCard || pendingCard.bookId !== snapshot.book.id || cardScope !== snapshot.baseCard) {', 'if (true || !pendingCard || pendingCard.bookId !== snapshot.book.id || cardScope !== snapshot.baseCard) {'),
+  'discard-category-recovery': () => mutateOnce("if (p.card && Object.hasOwn(p.card, 'categoryId')) keys.push('categoryId');", ''),
+  'category-changes-context-kind': () => mutateOnce('return { ...card, categoryId: category || null };', 'return { ...card, categoryId: category || null, kind: cardKinds.includes(category) ? category : card.kind };'),
   'retarget-queued-manual-action': () => mutateOnce('if (waitForAutosave) await autosaveRef.current?.wait();\n              if (!alive.current || epoch.current !== serial || current.current?.book.id !== bookId) return false;', 'if (waitForAutosave) await autosaveRef.current?.wait();\n              if (!alive.current) return false;'),
 };
 if (process.env.DSH_AUTOSAVE_MUTANT) { assert(mutants[process.env.DSH_AUTOSAVE_MUTANT]); mutants[process.env.DSH_AUTOSAVE_MUTANT](); }
 const helperStart = clientSource.indexOf('    const equal ='), helperEnd = clientSource.indexOf('    const en =', helperStart);
 assert(helperStart >= 0 && helperEnd > helperStart);
-const f = new Function(clientSource.slice(helperStart, helperEnd) + '\nreturn {equal,workspace,dirty,isDirty,blankCard,cardFields,editWritingConstraints,autosaveStep,mergeAutosaveAck,createAutosaveController,recoveryPayload,restoredWorkspace,validRecovery,conflictingFields,mergeWorkspace,textareaValue,applyTextareaEdit,autosaveRecoveryWorkspace,missingChapterDraft,autosaveRecoveryPayload,validAutosaveRecovery,restoredAutosaveWorkspace,autosaveOperationApplied,autosaveCanSave,validWritingConstraints,bookIsAvailable,applyConstraintsChanges,applyConstraintsInput,sameConstraintsDraft,constraintsHistorySnapshot,constraintsHistoryTarget};')();
+const f = new Function(clientSource.slice(helperStart, helperEnd) + '\nreturn {equal,workspace,dirty,isDirty,blankCard,cardFields,categorySaved,categoryReceipt,editCardCategory,editWritingConstraints,autosaveStep,mergeAutosaveAck,createAutosaveController,recoveryPayload,restoredWorkspace,validRecovery,conflictingFields,mergeWorkspace,textareaValue,applyTextareaEdit,autosaveRecoveryWorkspace,missingChapterDraft,autosaveRecoveryPayload,validAutosaveRecovery,restoredAutosaveWorkspace,autosaveOperationApplied,autosaveCanSave,validWritingConstraints,bookIsAvailable,applyConstraintsChanges,applyConstraintsInput,sameConstraintsDraft,constraintsHistorySnapshot,constraintsHistoryTarget};')();
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
 async function bounded(promise, label) { let timer; try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Timed out: ' + label)), 12000); })]); } finally { clearTimeout(timer); } }
 function clock() {
@@ -155,6 +157,8 @@ function appUi(book) {
     get guard() { return h.flags.guard; }, get confirm() { return h.flags.confirm; }, get polishRequirements() { return h.flags.polishRequirements; },
     localStorage: { setItem(key, value) { storage.set(key, value); }, getItem: key => storage.get(key) || null, removeItem(key) { storage.delete(key); } },
     t: key => key, commit(next) { current.current = next; h.applied.push(next); },
+    categoryFocusReturn: { current: false }, setCardFilter(value) { h.cardCategoryFilter = value; },
+    setCategoryForm(value) { h.categoryForm = typeof value === 'function' ? value(h.categoryForm) : value; },
     setConflict(value) { h.conflict = value; }, setGuard(value) { h.flags.guard = value; }, setBusy() {}, setNotice() {},
     setError(value) { if (value) h.errors.push(value); }, setContext() {}, setStorageFailed() {}, syncBookList() {}, resetSelection() {}, invalidateReviewReturn() {}, setConstraintsLimit() {},
     assignRecovery(value) { h.recoveryRef.current = value; }, download(filename, mime, text) { h.downloads.push({ filename, mime, value: JSON.parse(text) }); },
@@ -176,9 +180,10 @@ function appUi(book) {
     sourceRange('          const transition =', '          const changeChapter =') +
     sourceRange('          const downloadLocal =', '          const closeSelectionPopup =') +
     sourceRange('          const restoreRecovery =', '          const chooseCandidate =') +
+    sourceRange('          const changeCardCategory =', '          const closeCard =') +
     sourceRange('            const controller = new AbortController(), id = job.id, bookId = job.bookId, serial = availabilityEpoch.current;', '            poll();') +
     sourceRange('            const leave =', '            window.addEventListener');
-  h.app = new Function('env', 'with (env) { ' + actions + '\nreturn {persist,readRecovery,adopt,loadLatest,withBusy,mutateRaw,saveAll,transition,changeField,changeWritingConstraint,changeConstraintsMarkdown,downloadLocal,restoreRecovery,poll,leave,pagehide}; }')(env);
+  h.app = new Function('env', 'with (env) { ' + actions + '\nreturn {persist,readRecovery,adopt,loadLatest,withBusy,mutateRaw,saveAll,transition,changeField,changeWritingConstraint,changeConstraintsMarkdown,downloadLocal,restoreRecovery,changeCardCategory,createCardCategory,poll,leave,pagehide}; }')(env);
   constraintsEngine.current = {bookId:book.id,instance:{applyStructure({text,payload}) {
     const update=transaction(current.current.constraintsEditor.text,text,{beforeVersion:viewVersion,origin:'input.structure',payload});
     if(!h.app.changeConstraintsMarkdown(book.id,update))return false; viewVersion=update.version; return true;
@@ -475,6 +480,58 @@ try {
     assert.equal(h.recovery().chapterId, removed);
     assert.equal(h.sent.length, 1, 'Retry must not send any mutation to the surviving chapter');
     assert.deepEqual((await get(book)).chapters, after.chapters);
+    h.dispose();
+  }
+  {
+    // The category itself uses a stable caller ID and reconciles through real HTTP.
+    const book = await freshBook('设定卡分类的持久化与回执'), h = appUi(book);
+    h.categoryForm = { bookId: book.id, id: '', name: '  宫廷势力  ' };
+    const loss = h.loseResponse(), adding = h.app.createCardCategory(h.categoryForm);
+    const committed = await bounded(loss.entered.promise, 'category committed before lost receipt');
+    const [category] = committed.cardCategories;
+    assert.equal(category.name, '宫廷势力');
+    assert.equal(h.categoryForm.id, category.id);
+    assert.equal(h.cardCategoryFilter, undefined, 'Do not offer an unacknowledged category');
+    loss.release.resolve(); await adding;
+    assert.deepEqual(h.cardCategoryFilter, { bookId: book.id, id: category.id });
+    assert.equal(h.categoryForm, null);
+    assert.equal(h.sent.length, 1);
+
+    // Journal round-trip includes membership in the stable pending card; a later
+    // reassignment while awaiting the new card ACK must win without a second card.
+    const blank = { ...f.blankCard(category.id), kind: 'rule', status: 'confirmed' };
+    h.current = { ...h.current, card: blank, baseCard: blank };
+    h.app.changeField('card', 'title', '持久化规则');
+    h.app.changeField('card', 'content', '每座城只能有一枚印章');
+    const hold = h.hold(), saving = h.controller.flush();
+    const original = await bounded(hold.entered.promise, 'category assignment first card ACK');
+    const contextRequest = { bookId: book.id, chapterId: book.chapters[0].id, mode: 'draft' };
+    const promptBefore = await post('context', contextRequest);
+    assert.match(promptBefore.prompt, /每座城只能有一枚印章/);
+    h.app.changeCardCategory('world');
+    h.app.pagehide();
+    const journal = h.recovery();
+    assert.equal(journal.pendingCard.card.categoryId, category.id);
+    assert.equal(journal.card.categoryId, 'world');
+    assert.equal(f.validAutosaveRecovery(journal, book.id), true);
+    const recovered = f.restoredAutosaveWorkspace(f.workspace(original), journal);
+    assert.equal(recovered.card.id, original.cards[0].id);
+    assert.equal(recovered.card.categoryId, 'world');
+    hold.release.resolve(); await saving; await h.finish();
+    assert.equal(h.current.card.kind, 'rule');
+    assert.equal(h.current.card.categoryId, 'world');
+    const saved = await get(book);
+    assert.equal(saved.cards.length, 1);
+    assert.equal(saved.cards[0].id, original.cards[0].id);
+    assert.equal(saved.cards[0].categoryId, 'world');
+    assert.equal(saved.cards[0].kind, 'rule');
+    assert.deepEqual(await post('context', contextRequest), promptBefore, 'Library regrouping cannot change the real prompt or report');
+
+    h.app.changeCardCategory(''); await h.finish();
+    const cleared = await get(book);
+    assert.equal(cleared.cards[0].categoryId, null);
+    assert.equal(cleared.cards[0].kind, 'rule');
+    assert.deepEqual(cleared.cardCategories, [category]);
     h.dispose();
   }
   assert.equal(modelCalls, 0); assert.equal(agentCreates, 0); assert.equal(preferenceWrites, 0); assert.equal(jobWrites, 0);

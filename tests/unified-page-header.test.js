@@ -54,7 +54,7 @@ test('shared font scale keeps manuscript, Markdown, settings, card and history c
   assert(rule('.mx-root h2').includes('font-size:var(--mx-section-size)'));
   assert(rule('.mx-editor').includes('font-size:var(--mx-content-size)'));
   assert(rule('.mx-revision-preview').includes('font-size:var(--mx-content-size)'));
-  assert(rule('.mx-root textarea,.mx-constraints-editor-host,.mx-card p,.mx-history-surface pre').includes('font-size:var(--mx-content-size)'));
+  assert(rule('.mx-root textarea,.mx-constraints-editor-host,.mx-history-surface pre').includes('font-size:var(--mx-content-size)'));
   assert(rule('.mx-root .mx-topbar select').includes('font-size:var(--mx-ui-size)'));
   assert(!/\.mx-root-writing[^{}]*\{[^{}]*font-size:/.test(css));
 });

@@ -1,6 +1,6 @@
 # 灵感 inspiration
 
-**当前版本：v0.4.11**，新增「作品管理 → 章节管理」，支持打开、新增、改名、调整顺序和确认删除。已保存作品无需迁移。
+**当前版本：v0.4.13**。设定卡页面采用紧凑列表，支持按作品新建分类、筛选和调整归类。已保存作品无需迁移。
 
 A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precise selection polishing, and author-approved inline edits.
 
@@ -10,16 +10,16 @@ A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precis
 
 ## 安装与兼容性
 
-安装 **v0.4.11** 请选择 GitHub Release 的预构建包或固定版本标签。源码及可运行浏览器产物也可从 [开发分支 `feat/writing-constraints`](https://github.com/EliasRookie66/dsh-inspiration/tree/feat/writing-constraints) 获取。不要直接将含写作约束的作品数据交给更早的 `v0.1.0` 读取。
+安装 **v0.4.13** 请选择 GitHub Release 的预构建包或固定版本标签。源码及可运行浏览器产物也可从 [开发分支 `feat/writing-constraints`](https://github.com/EliasRookie66/dsh-inspiration/tree/feat/writing-constraints) 获取。不要直接将含写作约束的作品数据交给更早的 `v0.1.0` 读取。
 
 - 当前支持声明：DSH **0.2.2-rc.3**，Node.js **>=22**。其他 DSH 版本尚未验证，不建议跳过兼容检查。
 - 在目标 DSH Web／Desktop 的「插件管理 → 添加插件」中使用：
 
   ```text
-  github:EliasRookie66/dsh-inspiration#v0.4.11
+  github:EliasRookie66/dsh-inspiration#v0.4.13
   ```
 
-- 也可从 [v0.4.11 Release](https://github.com/EliasRookie66/dsh-inspiration/releases/tag/v0.4.11) 下载 [预构建安装包](https://github.com/EliasRookie66/dsh-inspiration/releases/download/v0.4.11/ycx-dsh-inspiration-0.4.11.tgz)，通过宿主支持的包安装入口使用。同一页面提供 `SHA256SUMS` 校验文件。
+- 也可从 [v0.4.13 Release](https://github.com/EliasRookie66/dsh-inspiration/releases/tag/v0.4.13) 下载 [预构建安装包](https://github.com/EliasRookie66/dsh-inspiration/releases/download/v0.4.13/ycx-dsh-inspiration-0.4.13.tgz)，通过宿主支持的包安装入口使用。同一页面提供 `SHA256SUMS` 校验文件。
 - 源码与可运行 JavaScript 均位于仓库根目录，没有安装期构建脚本。是否需要刷新或重新启动，以宿主安装结果为准；先保存当前工作。
 - 本项目尚未发布到 npm；仓库名与包标识 `@ycx/dsh-inspiration` 不必相同。
 
@@ -46,6 +46,10 @@ A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precis
 差异采用轻量行内/逐行展示，新文本在前、原文在后；不再用重边框卡片包装每处修改。真实替换显示确切旧文字；纯插入则展示**插入位置的原文上下文**并明确标注此处新增，不把空替换范围误称为缺失原文。仅换行、Tab 或空格的改动有可见提示，不再显示空白绿条。用于对照的上下文不会进入实际替换范围，精确的原始偏移与确认逻辑不变。
 
 写作界面不再显示「本章计划」、正文操作说明、选区计数提示和「章节状态」下拉框；已有计划和状态数据仍保留，原有计划仍可作为上下文使用。顶部不再固定留出整条 64px 空白，标题行依据宿主窗口按钮的实际横向安全区避让，整体更靠上。
+
+**「设定卡」**先显示紧凑列表，一行摘要不再占用独立滚动区。点卡片开始编辑，宽窗口保留左侧列表，窄窗口把整列宽度留给编辑器；用「返回设定卡列表」返回。设置项集中排列，自动保存及切卡前的未保存保护不变。
+
+设定卡预设 **世界观、人物、规则、时间线、未解伏笔** 五个分类。用列表上方的「分类」切换筛选，用「新建分类」添加本作品的自定义分类，然后在卡片编辑器选择归类。筛选不会改变卡片，按当前分类新建卡片时会预填分类。「按类型」让卡片回到由原类型决定的分类；「上下文类型」和「分类」独立，重新归类不改变规则卡的硬约束行为。JSON 备份保留分类和归属；新增分类后，不建议用早于 v0.4.13 的版本读取新版作品 JSON。
 
 ## 选中文字后的原位润色
 

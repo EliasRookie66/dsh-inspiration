@@ -11,6 +11,7 @@ export const LIMITS = Object.freeze({
   bookChars: 32 * 1024 * 1024, bookBytes: 32 * 1024 * 1024,
   reportItems: 20_000, analysis: 8_000, revisionHunks: REVISION_LIMITS.hunks,
   writingConstraints: 64, constraintCategory: 80, constraintContent: 4_000,
+  cardCategories: 128, cardCategoryName: 60,
 });
 
 export class DomainError extends Error {
@@ -29,11 +30,18 @@ const has = (value, key) => Object.hasOwn(value, key);
 const now = () => new Date().toISOString();
 const MODES = ['draft', 'continue', 'polish', 'summary', 'revise'];
 const KINDS = ['world', 'character', 'timeline', 'thread', 'rule'];
+const categoryNameKey = name => name.normalize('NFKC').trim().toLowerCase();
+// Include both locales' category labels, kind keys, and all-categories filter.
+const RESERVED_CARD_CATEGORY_NAMES = new Set([
+  ...KINDS, 'Open thread', 'All categories', '世界观', '人物', '规则', '时间线', '未解伏笔', '伏笔', '全部分类',
+].map(categoryNameKey));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BOOK_KEYS = ['id', 'schemaVersion', 'revision', 'title', 'premise', 'outline', 'style', 'contextBudget', 'chapters', 'cards', 'proposals', 'createdAt', 'updatedAt'];
 const WRITING_CONSTRAINT_KEYS = ['id', 'category', 'content', 'enabled'];
 const CHAPTER_KEYS = ['id', 'title', 'outline', 'body', 'revision', 'status', 'summary', 'summaryRevision', 'history'];
-const CARD_KEYS = ['id', 'kind', 'title', 'content', 'status', 'pinned', 'fromChapter', 'toChapter', 'tags'];
+const CARD_REQUIRED_KEYS = ['id', 'kind', 'title', 'content', 'status', 'pinned', 'fromChapter', 'toChapter', 'tags'];
+const CARD_KEYS = [...CARD_REQUIRED_KEYS, 'categoryId'];
+const CARD_CATEGORY_KEYS = ['id', 'name'];
 const PROPOSAL_KEYS = ['id', 'chapterId', 'mode', 'sourceRevision', 'sourceBody', 'selection', 'text', 'createdAt', 'context', 'state'];
 const REPORT_KEYS = ['usedChars', 'budget', 'included', 'omitted', 'warnings'];
 
@@ -156,8 +164,38 @@ function validateReport(report, tally) {
   }
 }
 
+function trimCardCategoryName(name) {
+  // Check before trim so boundary line breaks or controls cannot disappear.
+  if (typeof name !== 'string' || /[\p{Cc}\p{Zl}\p{Zp}\p{Bidi_Control}]/u.test(name)) {
+    fail('cardCategory.name 必须是无换行或控制字符的文本');
+  }
+  return name.trim();
+}
+
+function validateCardCategories(value, ids, tally) {
+  const categoryIds = new Set();
+  const names = new Set();
+  for (const category of array(value, 'book.cardCategories', LIMITS.cardCategories)) {
+    record(category, 'cardCategory', CARD_CATEGORY_KEYS);
+    const id = identifier(category.id, 'cardCategory.id', ids);
+    if (id !== id.toLowerCase()) fail('cardCategory.id 必须使用小写 UUID');
+    categoryIds.add(id);
+    const name = category.name;
+    if (name !== trimCardCategoryName(name)) fail('cardCategory.name 不能含首尾空白');
+    const key = categoryNameKey(text(name, 'cardCategory.name', LIMITS.cardCategoryName, true, tally));
+    if (!key || RESERVED_CARD_CATEGORY_NAMES.has(key)) fail('cardCategory.name 不能与内置设定卡分类重名');
+    if (names.has(key)) fail('cardCategory.name 名称已存在');
+    names.add(key);
+  }
+  return categoryIds;
+}
+
+function hasCustomCardCategory(card) {
+  return has(card, 'categoryId') && card.categoryId !== null && !KINDS.includes(card.categoryId);
+}
+
 function validateCard(card, ids, tally) {
-  record(card, 'card', CARD_KEYS);
+  record(card, 'card', CARD_KEYS, CARD_REQUIRED_KEYS);
   identifier(card.id, 'card.id', ids);
   enumeration(card.kind, 'card.kind', KINDS);
   text(card.title, 'card.title', LIMITS.title, true, tally);
@@ -168,6 +206,14 @@ function validateCard(card, ids, tally) {
   if (card.toChapter !== null) integer(card.toChapter, 'card.toChapter', card.fromChapter, LIMITS.chapters);
   array(card.tags, 'card.tags', LIMITS.tags);
   for (const tag of card.tags) text(tag, 'card.tags[]', LIMITS.tag, true, tally);
+  if (hasCustomCardCategory(card)) identifier(card.categoryId, 'card.categoryId');
+}
+
+function cloneCardForSave(card) {
+  // Validate nested data before cloning; validateBook checks the reference in the complete book.
+  validateCard(card);
+  if (hasCustomCardCategory(card)) card.categoryId = card.categoryId.toLowerCase();
+  return structuredClone(card);
 }
 
 function validateProposal(proposal, chapter, ids, tally) {
@@ -226,9 +272,9 @@ function validateWritingConstraints(value, ids, tally) {
 }
 
 export function validateBook(value) {
-  // Schema 1 books created before writing conditions remain valid as-is. Read
-  // validation must not normalize or migrate them (including frozen objects).
-  record(value, 'book', [...BOOK_KEYS, 'writingConstraints'], BOOK_KEYS);
+  // Schema 1 books may omit the two optional collections. Read validation
+  // never normalizes or migrates them (including frozen objects).
+  record(value, 'book', [...BOOK_KEYS, 'writingConstraints', 'cardCategories'], BOOK_KEYS);
   const ids = new Set();
   const tally = { chars: 0 };
   identifier(value.id, 'book.id', ids);
@@ -239,6 +285,7 @@ export function validateBook(value) {
   text(value.outline, 'book.outline', LIMITS.outline, false, tally);
   text(value.style, 'book.style', LIMITS.style, false, tally);
   if (has(value, 'writingConstraints')) validateWritingConstraints(value.writingConstraints, ids, tally);
+  const categoryIds = has(value, 'cardCategories') ? validateCardCategories(value.cardCategories, ids, tally) : new Set();
   integer(value.contextBudget, 'book.contextBudget', LIMITS.minBudget, LIMITS.maxBudget);
   timestamp(value.createdAt, 'book.createdAt');
   timestamp(value.updatedAt, 'book.updatedAt');
@@ -271,7 +318,10 @@ export function validateBook(value) {
     chapters.set(chapter.id, chapter);
   }
   array(value.cards, 'book.cards', LIMITS.cards);
-  for (const card of value.cards) validateCard(card, ids, tally);
+  for (const card of value.cards) {
+    validateCard(card, ids, tally);
+    if (hasCustomCardCategory(card) && !categoryIds.has(card.categoryId)) fail('card.categoryId 必须引用本书已存在的设定卡分类');
+  }
   array(value.proposals, 'book.proposals', LIMITS.proposals);
   for (const proposal of value.proposals) {
     // Check record before reading properties, so accessors cannot execute.
@@ -356,7 +406,7 @@ function remapCardRanges(cards, remap, reason) {
 
 export function mutateBook(book, operation) {
   validateBook(book);
-  record(operation, 'operation', ['action', 'patch', 'title', 'chapterId', 'direction', 'confirmTitle', 'card', 'cardId', 'proposal', 'proposalId', 'text', 'historyId', 'hunkId'], ['action']);
+  record(operation, 'operation', ['action', 'patch', 'title', 'chapterId', 'direction', 'confirmTitle', 'card', 'cardId', 'category', 'proposal', 'proposalId', 'text', 'historyId', 'hunkId'], ['action']);
   const next = structuredClone(book);
   const stamp = now();
   switch (operation.action) {
@@ -424,6 +474,14 @@ export function mutateBook(book, operation) {
       next.proposals = next.proposals.filter(proposal => proposal.chapterId !== chapter.id);
       break;
     }
+    case 'addCardCategory': {
+      operationShape(operation, ['category']);
+      const category = record(operation.category, 'cardCategory', CARD_CATEGORY_KEYS);
+      const id = identifier(category.id, 'cardCategory.id').toLowerCase();
+      const name = trimCardCategoryName(category.name);
+      (next.cardCategories ??= []).push({ id, name });
+      break;
+    }
     // A caller-generated identity survives a lost autosave acknowledgement.
     // This action is create-only: retries must reconcile that same identity,
     // never overwrite an existing card or invent a second identity.
@@ -438,8 +496,7 @@ export function mutateBook(book, operation) {
         kind: 'world', title: '未命名设定', content: '', status: 'proposed', pinned: false, fromChapter: 1, toChapter: null, tags: [],
         ...operation.card,
       };
-      validateCard(card);
-      next.cards.push(structuredClone(card));
+      next.cards.push(cloneCardForSave(card));
       break;
     }
     case 'saveCard': {
@@ -455,11 +512,9 @@ export function mutateBook(book, operation) {
         ...(current || { id: randomUUID(), kind: 'world', title: '未命名设定', content: '', status: 'proposed', pinned: false, fromChapter: 1, toChapter: null, tags: [] }),
         ...operation.card,
       };
-      // Validate nested tags before cloning: structuredClone can invoke getters
-      // on otherwise-invalid supplied objects.
-      validateCard(card);
-      if (current) next.cards[next.cards.indexOf(current)] = structuredClone(card);
-      else next.cards.push(structuredClone(card));
+      const saved = cloneCardForSave(card);
+      if (current) next.cards[next.cards.indexOf(current)] = saved;
+      else next.cards.push(saved);
       break;
     }
     case 'removeCard': {
@@ -810,7 +865,16 @@ export function cloneImportedBook(value) {
     chapter.id = randomUUID();
     for (const entry of chapter.history) entry.id = randomUUID();
   }
-  for (const card of copy.cards) card.id = randomUUID();
+  const categoryIds = new Map();
+  if (has(copy, 'cardCategories')) for (const category of copy.cardCategories) {
+    const oldId = category.id;
+    category.id = randomUUID();
+    categoryIds.set(oldId, category.id);
+  }
+  for (const card of copy.cards) {
+    card.id = randomUUID();
+    if (hasCustomCardCategory(card)) card.categoryId = categoryIds.get(card.categoryId);
+  }
   if (has(copy, 'writingConstraints')) for (const condition of copy.writingConstraints) condition.id = randomUUID();
   // Imported generations are not author approvals in this profile. Preserve
   // manuscript/history/summary data, but require fresh proposals after import.

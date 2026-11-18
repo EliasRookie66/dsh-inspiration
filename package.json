@@ -1,6 +1,6 @@
 {
   "name": "@ycx/dsh-inspiration",
-  "version": "0.4.11",
+  "version": "0.4.13",
   "description": "inspiration: a writing-first long-fiction workbench with author-approved AI drafts and precise selection polishing.",
   "private": true,
   "repository": { "type": "git", "url": "git+https://github.com/EliasRookie66/dsh-inspiration.git" },
