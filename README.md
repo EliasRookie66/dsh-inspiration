@@ -1,6 +1,6 @@
 # 灵感 inspiration
 
-**当前版本：v0.4.10**。作品工具、作品管理、预览上下文和模型／上下文／详情成为共用固定顶栏的独立页面，已保存的作品数据与生成 API 不迁移。较早的 `v0.1.0` Release 继续保留。
+**当前版本：v0.4.11**，新增「作品管理 → 章节管理」，支持打开、新增、改名、调整顺序和确认删除。已保存作品无需迁移。
 
 A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precise selection polishing, and author-approved inline edits.
 
@@ -10,22 +10,22 @@ A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precis
 
 ## 安装与兼容性
 
-安装 **v0.4.10** 请选择 GitHub Release 的预构建包或固定版本标签。源码及可运行浏览器产物也可从 [开发分支 `feat/writing-constraints`](https://github.com/EliasRookie66/dsh-inspiration/tree/feat/writing-constraints) 获取。不要直接将含写作约束的作品数据交给更早的 `v0.1.0` 读取。
+安装 **v0.4.11** 请选择 GitHub Release 的预构建包或固定版本标签。源码及可运行浏览器产物也可从 [开发分支 `feat/writing-constraints`](https://github.com/EliasRookie66/dsh-inspiration/tree/feat/writing-constraints) 获取。不要直接将含写作约束的作品数据交给更早的 `v0.1.0` 读取。
 
 - 当前支持声明：DSH **0.2.2-rc.3**，Node.js **>=22**。其他 DSH 版本尚未验证，不建议跳过兼容检查。
 - 在目标 DSH Web／Desktop 的「插件管理 → 添加插件」中使用：
 
   ```text
-  github:EliasRookie66/dsh-inspiration#v0.4.10
+  github:EliasRookie66/dsh-inspiration#v0.4.11
   ```
 
-- 也可从 [v0.4.10 Release](https://github.com/EliasRookie66/dsh-inspiration/releases/tag/v0.4.10) 下载 [预构建安装包](https://github.com/EliasRookie66/dsh-inspiration/releases/download/v0.4.10/ycx-dsh-inspiration-0.4.10.tgz)，通过宿主支持的包安装入口使用。同一页面提供 `SHA256SUMS` 校验文件。
+- 也可从 [v0.4.11 Release](https://github.com/EliasRookie66/dsh-inspiration/releases/tag/v0.4.11) 下载 [预构建安装包](https://github.com/EliasRookie66/dsh-inspiration/releases/download/v0.4.11/ycx-dsh-inspiration-0.4.11.tgz)，通过宿主支持的包安装入口使用。同一页面提供 `SHA256SUMS` 校验文件。
 - 源码与可运行 JavaScript 均位于仓库根目录，没有安装期构建脚本。是否需要刷新或重新启动，以宿主安装结果为准；先保存当前工作。
 - 本项目尚未发布到 npm；仓库名与包标识 `@ycx/dsh-inspiration` 不必相同。
 
 ## 开始写作
 
-1. 在 DSH 侧栏打开 **灵感**，进入「作品工具」新建作品和章节。
+1. 在 DSH 侧栏打开 **灵感**，进入「作品工具」新建作品，再从「作品管理 → 章节管理」添加章节。
 2. 在作品设置填故事前提、全书大纲与文风。把需要坚持的世界观、人物、时间线、伏笔和规则写入设定卡。
 3. 设定卡标为「已确认」才会进入上下文；用起止章节控制它在哪个时点生效。固定卡片与规则完整保留，装不下时明确报错，不静默截掉硬约束。
 4. 选择「起草本章」或「按需重写本章」，填写要求，可在「预览上下文」查看本次参考资料。默认沿用 DSH 当前模型，也可在「模型／上下文／详情」单独选择写作模型，不需要另一套 API 密钥。
@@ -146,6 +146,13 @@ A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precis
 - 删除后可选择其他作品或新建/导入作品；最后一本删除后显示空书库入口。删除已成功但后续列表刷新失败，会单独提示，不把成功误报成删除失败。
 - 并发改名/改稿后旧确认失效，必须重新核对；网络中断而未收到明确删除回执时保留本地副本，先刷新核对，不盲目重试。
 - 存储故障可能留下「残留数据待清理」：作品已从书库移除并禁止读取/写入，但**不代表所有数据已擦除**。插件下次加载自动重试，列表持续提示待清理数量。KV 后端不提供整单元删除，清理完成后可以保留不含书稿的空存储单元。
+
+### 章节管理
+
+- 章节按实际顺序列出，标明当前章和状态，可打开正文、新增、改名、上移或下移。正文顶部保留快捷切章和改标题；新增的主入口在此页。
+- 排序保留章节 ID、正文、摘要、版本历史和提案；旧提案的历史上下文报告不改写，新生成使用新顺序。设定卡的章号范围随之调整以保持原覆盖；若会形成不连续范围，先修改提示列出的设定卡。排序和删除在本书尚有未收尾生成时不可用。
+- 删除须由作者在标明章号和标题的确认框输入**完全一致的已保存章名**。同名章按实际 ID 区分；旧版多行标题须先改为单行。建议先导出 JSON 备份。删除本章正文、摘要、历史与提案，不删其他章、不删已有备份、归档任务记录或模型会话日志。最后一章可删除；若某张卡因此失去唯一覆盖的章节，须先调整卡片范围。
+- 未处理的本地草稿、过期版本或无法确认的写入结果会阻止变更；先恢复、保存、核对或刷新。外部删章后，本地稿不能恢复到其他章，可先下载本地改动。
 
 ## 长篇上下文
 

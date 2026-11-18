@@ -332,9 +332,31 @@ function operationShape(operation, fields, required = fields) {
   record(operation, 'operation', ['action', ...fields], ['action', ...required]);
 }
 
+// Work only on mutateBook's detached snapshot; a blocker aborts the whole commit.
+// Remap returns new bounds, undefined to keep them, or null to block the operation.
+function remapCardRanges(cards, remap, reason) {
+  const blocked = [];
+  let count = 0;
+  for (const [index, card] of cards.entries()) {
+    const range = remap(card.fromChapter, card.toChapter);
+    if (range === null) {
+      count++;
+      if (blocked.length < 5) {
+        const title = card.title.replace(/[\p{Cc}\p{Zl}\p{Zp}\p{Bidi_Control}]/gu, ' ');
+        const excerpt = head(title, 60);
+        blocked.push(`#${index + 1}「${excerpt}${excerpt.length < title.length ? '…' : ''}」(${card.fromChapter}–${card.toChapter ?? '无上限'})`);
+      }
+    } else if (range) [card.fromChapter, card.toChapter] = range;
+  }
+  if (count) {
+    const more = count - blocked.length;
+    fail(`${reason}：${blocked.join('、')}${more ? `，另有 ${more} 张` : ''}。请先修改这些设定卡的章节范围。`, 'CHAPTER_CARD_RANGE');
+  }
+}
+
 export function mutateBook(book, operation) {
   validateBook(book);
-  record(operation, 'operation', ['action', 'patch', 'title', 'chapterId', 'card', 'cardId', 'proposal', 'proposalId', 'text', 'historyId', 'hunkId'], ['action']);
+  record(operation, 'operation', ['action', 'patch', 'title', 'chapterId', 'direction', 'confirmTitle', 'card', 'cardId', 'proposal', 'proposalId', 'text', 'historyId', 'hunkId'], ['action']);
   const next = structuredClone(book);
   const stamp = now();
   switch (operation.action) {
@@ -365,6 +387,41 @@ export function mutateBook(book, operation) {
       }
       if (has(operation.patch, 'status')) enumeration(operation.patch.status, 'patch.status', ['draft', 'final']);
       changeChapter(getChapter(next, operation.chapterId), operation.patch, 'manual-save', stamp);
+      break;
+    }
+    case 'moveChapter': {
+      operationShape(operation, ['chapterId', 'direction']);
+      const direction = enumeration(operation.direction, 'direction', ['up', 'down']);
+      const chapter = getChapter(next, operation.chapterId);
+      const index = next.chapters.indexOf(chapter);
+      const adjacent = index + (direction === 'up' ? -1 : 1);
+      if (adjacent < 0 || adjacent >= next.chapters.length) fail('已到章节列表边界，不能继续移动', 'INVALID_STATE');
+      const source = index + 1, destination = adjacent + 1;
+      remapCardRanges(next.cards, (from, to) => {
+        const covers = ordinal => from <= ordinal && (to === null || ordinal <= to);
+        const coversSource = covers(source);
+        if (coversSource === covers(destination)) return;
+        // Compare full ordinal coverage, not just the chapters that exist now.
+        if (from !== to) return null;
+        const moved = coversSource ? destination : source;
+        return [moved, moved];
+      }, '移动会使这些设定卡的章节范围不连续');
+      next.chapters[index] = next.chapters[adjacent];
+      next.chapters[adjacent] = chapter;
+      break;
+    }
+    case 'deleteChapter': {
+      operationShape(operation, ['chapterId', 'confirmTitle']);
+      const chapter = getChapter(next, operation.chapterId);
+      if (operation.confirmTitle !== chapter.title) fail('请输入已保存的完整章节名称以确认删除，空格也须一致');
+      const index = next.chapters.indexOf(chapter);
+      const ordinal = index + 1;
+      remapCardRanges(next.cards, (from, to) => {
+        if (from === ordinal && to === ordinal) return null;
+        return [from > ordinal ? from - 1 : from, to !== null && to >= ordinal ? to - 1 : to];
+      }, '删除会使这些设定卡失去唯一适用的章节');
+      next.chapters.splice(index, 1);
+      next.proposals = next.proposals.filter(proposal => proposal.chapterId !== chapter.id);
       break;
     }
     // A caller-generated identity survives a lost autosave acknowledgement.

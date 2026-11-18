@@ -907,6 +907,29 @@ window.__ModuleLoader__.load({
       }
       return next;
     }
+    function missingChapterDraft(book, value) {
+      return !!value?.dirty.chapter && !book.chapters.some(chapter => chapter.id === value.chapterId);
+    }
+    function chapterMutationReceipt(before, book, op) {
+      if (book?.id !== before.id || book.revision !== before.revision + 1 || !Array.isArray(book.chapters) || !Array.isArray(book.cards) || !Array.isArray(book.proposals)) return false;
+      const old = before.chapters.map(c => c.id), next = book.chapters.map(c => c?.id), index = old.indexOf(op.chapterId);
+      const expectedProposals = op.action === 'deleteChapter' ? before.proposals.filter(p => p.chapterId !== op.chapterId) : before.proposals;
+      if (!equal(book.proposals, expectedProposals)) return false;
+      if (op.action === 'addChapter') {
+        const added = book.chapters.at(-1);
+        return next.length === old.length + 1 && typeof added?.id === 'string' && !old.includes(added.id) && added.title === op.title && equal(next.slice(0, -1), old);
+      }
+      if (index < 0) return false;
+      if (op.action === 'deleteChapter') return equal(next, old.filter(id => id !== op.chapterId)) &&
+        Array.isArray(book.proposals) && !book.proposals.some(proposal => proposal.chapterId === op.chapterId);
+      if (op.action === 'moveChapter') {
+        const target = index + (op.direction === 'up' ? -1 : 1);
+        if (target < 0 || target >= old.length) return false;
+        [old[index], old[target]] = [old[target], old[index]];
+        return equal(next, old);
+      }
+      return op.action === 'updateChapter' && equal(next, old) && book.chapters[index].title === op.patch.title;
+    }
     function autosaveRecoveryWorkspace(w, pending) {
       if (!w || !pending || pending.snapshot.book.id !== w.book.id || pending.snapshot.book.revision !== w.book.revision) return w;
       const { snapshot, step } = pending;
@@ -1470,6 +1493,7 @@ window.__ModuleLoader__.load({
       modelPicker: 'Generation model', modelMode: 'Model selection', modelFollowDefault: 'Follow DSH default', modelCustom: 'Custom for Inspiration', modelProvider: 'Provider', modelName: 'Model', modelReasoning: 'Reasoning effort', modelProviderDefault: 'Provider default', modelChooseProvider: 'Choose a provider', modelChooseModel: 'Choose a model',
       modelApply: 'Apply to Inspiration', modelReload: 'Reload saved model preference', modelRetryCatalog: 'Retry model catalog', modelSaved: 'Model preference saved', modelDraft: 'Model preference draft — not applied', modelScope: 'Plugin-wide preference for Inspiration only. Does not change the DSH default or your manuscript.', modelNextGeneration: 'Applies to the next generation. A running job keeps its original model.', modelFollowObserved: 'Last observed DSH default: {model}. Resolved again when generation starts.', modelEffective: 'Effective saved custom model: {model}', modelJob: 'This job’s actual model: {model}', modelJobPending: 'This job’s actual model will appear when its server snapshot is loaded.',
       modelFeatureUnavailable: 'Model selection is unavailable in the current backend. Reload the plugin/backend, then reload the saved model preference. Generation is blocked until the contract is available.', modelLoading: 'Loading model catalog…', modelSaving: 'Applying model preference…', modelUnsaved: 'Apply or explicitly reload your model choices before generating.', modelSettingsConflict: 'The saved model preference changed elsewhere. Your choices are kept. Reload the saved model preference explicitly before trying again.', modelChooseRoute: 'Choose a provider and model before applying.', modelRouteUnavailable: 'This selected route is unavailable. It has not been replaced. Choose another active route or follow the DSH default, then Apply.', modelEffortUnavailable: 'The selected reasoning effort is no longer advertised. Choose an advertised effort or Provider default, then Apply.', modelCatalogError: 'Could not load the model catalog. Your choices are kept; retry the catalog.', modelUnavailableOption: 'Unavailable: {id}',
+      chapterManagement: 'Chapter management', openChapter: 'Open', renameChapter: 'Rename', chapterUp: 'Move up', chapterDown: 'Move down', deleteChapter: 'Delete chapter', chapterAction: 'Chapter {number} · {title}: {action}', chapterCurrent: 'Current chapter', chapterCountDetails: '{history} versions · {proposals} AI proposals', chapterStructureHint: 'Chapter changes preserve card coverage. If an existing card would need two ranges or lose its only chapter, edit the card before continuing.', chapterStructureBusy: 'Wait for this book’s generation to finish before arranging or deleting chapters.', chapterDeleteWarning: 'Permanently deletes this chapter’s text, summary, history, and AI proposals. Export a JSON backup first. Existing backups, archived job records and model-session logs are not deleted.', chapterDeleteType: 'Type the exact saved chapter title', chapterDeleteMultiline: 'Rename to a single-line title before deleting.', chapterAdded: 'Chapter added.', chapterRenamed: 'Chapter renamed.', chapterMoved: 'Chapter order saved.', chapterDeleted: 'Chapter deleted.', chapterWriteUncertain: 'The change may have been saved. Refresh the saved version and check the chapter list before retrying.', chapterMissingDraft: 'The chapter for this draft no longer exists. Download the local edits before discarding them; they cannot be applied to another chapter.',
       manageBooks: 'Book management', manageBookHint: 'Rename or permanently delete the selected book.', savedBookTitle: 'Exact saved title', bookIdentity: 'Book ID: {id} · revision {revision}', bookOption: '{title} · {count} chapters · {id}',
       renameBook: 'Rename book', renameTitle: 'New book title', renamed: 'Book renamed.', manageUnsaved: 'Resolve all unsaved edits and saved-version conflicts before managing this book.', manageStale: 'The book has changed since this page was opened. Refresh the saved version to review it again.', manageRecovery: 'Restore and save, or explicitly discard the local recovery copy before managing this book.',
       deleteBook: 'Permanently delete book', deleteWarning: 'This cannot be undone. Permanently deletes this book, every chapter, canon card, proposal, revision history and this plugin’s job records. DSH model-session logs are stored separately and are not deleted.',
@@ -1577,6 +1601,7 @@ window.__ModuleLoader__.load({
       modelPicker: '生成模型', modelMode: '模型选择', modelFollowDefault: '跟随 DSH 默认', modelCustom: '为灵感单独选择', modelProvider: '提供方', modelName: '模型', modelReasoning: '推理强度', modelProviderDefault: '提供方默认', modelChooseProvider: '请选择提供方', modelChooseModel: '请选择模型',
       modelApply: '应用到灵感', modelReload: '重新载入已保存模型偏好', modelRetryCatalog: '重试模型目录', modelSaved: '模型偏好已保存', modelDraft: '模型偏好草稿 · 尚未应用', modelScope: '仅对灵感插件全局生效，不修改 DSH 默认模型，也不修改正文。', modelNextGeneration: '从下一次生成开始生效；正在运行的任务仍使用原模型。', modelFollowObserved: '最近读取的 DSH 默认模型：{model}（生成开始时重新读取）。', modelEffective: '已保存自选偏好的当前有效模型：{model}', modelJob: '本次任务实际模型：{model}', modelJobPending: '载入服务端任务快照后将显示本次任务的实际模型。',
       modelFeatureUnavailable: '当前后端尚不支持模型选择。请重新加载插件或后端，再重新载入已保存模型偏好。接口可用前暂不能生成。', modelLoading: '正在载入模型目录…', modelSaving: '正在应用模型偏好…', modelUnsaved: '生成前请先应用模型选择，或明确重新载入已保存偏好。', modelSettingsConflict: '已保存模型偏好在其他位置发生了变化，当前选择已保留。请明确重新载入已保存偏好后再操作。', modelChooseRoute: '应用前请选择提供方与模型。', modelRouteUnavailable: '当前所选模型路线不可用，未自动替换。请选择其他可用路线，或改为跟随 DSH 默认，再点击应用。', modelEffortUnavailable: '当前推理强度已不在模型公布的选项中，请选择有效强度或提供方默认，再点击应用。', modelCatalogError: '模型目录载入失败，当前选择已保留，请重试模型目录。', modelUnavailableOption: '不可用：{id}',
+      chapterManagement: '章节管理', openChapter: '打开', renameChapter: '改名', chapterUp: '上移', chapterDown: '下移', deleteChapter: '删除章节', chapterAction: '第 {number} 章「{title}」：{action}', chapterCurrent: '当前章节', chapterCountDetails: '{history} 条历史 · {proposals} 条 AI 提案', chapterStructureHint: '排序或删除会保持设定卡对剩余章节的覆盖。若某张卡需拆成两段，或删除的是它唯一覆盖的章，请先调整该卡范围。', chapterStructureBusy: '本作品还有任务未结束，暂不能排序或删除章节。', chapterDeleteWarning: '永久删除本章正文、摘要、版本历史和 AI 提案。建议先导出 JSON 备份。已有备份、归档任务记录和模型会话日志不会随之删除。', chapterDeleteType: '输入完全一致的已保存章名', chapterDeleteMultiline: '请先将本章改为单行标题，再删除。', chapterAdded: '已新增章节。', chapterRenamed: '已修改章节名称。', chapterMoved: '章节顺序已保存。', chapterDeleted: '已删除章节。', chapterWriteUncertain: '章节变更可能已保存。请先刷新已保存版本，对照章节列表后再试。', chapterMissingDraft: '草稿所属章节已不存在。请先下载本地改动，再决定是否放弃；不能自动应用到其他章节。',
       manageBooks: '作品管理', manageBookHint: '重命名或永久删除当前所选作品。', savedBookTitle: '完整的已保存名称', bookIdentity: '作品编号：{id} · 修订 {revision}', bookOption: '{title} · {count} 章 · {id}',
       renameBook: '重命名作品', renameTitle: '新的作品名称', renamed: '作品已重命名。', manageUnsaved: '请先明确处理全部未保存编辑和版本冲突，再管理作品。', manageStale: '作品版本已变化，请刷新已保存版本后重新核对。', manageRecovery: '请先恢复并保存本地恢复稿，或明确丢弃恢复稿，再管理作品。',
       deleteBook: '永久删除作品', deleteWarning: '此操作不可撤销。将永久删除本作品及其全部章节、设定卡、提案、版本历史和本插件的任务记录。DSH 模型会话日志单独保留，不会随之删除。',
@@ -1725,7 +1750,7 @@ window.__ModuleLoader__.load({
 .mx-topbar-group{display:flex;align-items:center;flex-wrap:wrap;gap:3px;min-width:0;max-width:100%}.mx-topbar-group+.mx-topbar-group{border-inline-start:1px solid var(--dsw-alias-border-l1);padding-inline-start:7px}.mx-topbar .mx-field{gap:0;flex:0 1 13rem;min-width:0}.mx-topbar-book{flex:1 1 13rem;max-width:24rem}.mx-topbar-chapter{flex:1 1 11rem;max-width:27rem}
 .mx-root .mx-topbar select{min-height:32px;text-overflow:ellipsis;padding:4px 6px;font-size:var(--mx-ui-size)}.mx-topbar-book>.mx-field,.mx-topbar-chapter>.mx-field{flex:1 1 7rem;min-width:0}.mx-topbar-actions{flex:0 1 auto}.mx-topbar-feedback{flex:0 1 auto;flex-wrap:nowrap}.mx-topbar-feedback>.mx-job-terminal{min-width:0}
 .mx-toolbar-hit{display:inline-flex;position:relative;flex:none}.mx-root .mx-toolbar-button{display:inline-flex;align-items:center;justify-content:center;position:relative;width:32px;height:32px;min-height:32px;padding:0;border:1px solid transparent;background:transparent}.mx-toolbar-button svg,.mx-toolbar-hit>button:disabled{pointer-events:none}.mx-root .mx-toolbar-button:focus-visible{outline-offset:-2px}.mx-root .mx-toolbar-button.mx-primary{border-color:var(--dsw-alias-brand-primary)}.mx-toolbar-dot{position:absolute;inset-inline-end:3px;inset-block-start:3px;width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-state-warn-primary);pointer-events:none}
-.mx-utility-page{min-width:0}.mx-utility-page h2:focus{outline-offset:3px}.mx-utility-page pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.mx-book-page-links{display:flex;flex:0 0 auto;gap:3px}.mx-utility-page .mx-subpanel{min-width:0}
+.mx-utility-page{min-width:0}.mx-chapter-list{list-style:none;margin:0;padding:0}.mx-chapter-list li{padding:8px 0;border-block-end:1px solid var(--dsw-alias-border-l1);min-width:0}.mx-chapter-list li strong{overflow-wrap:anywhere}.mx-chapter-list li .mx-actions{justify-content:flex-start}.mx-utility-page h2:focus{outline-offset:3px}.mx-utility-page pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.mx-book-page-links{display:flex;flex:0 0 auto;gap:3px}.mx-utility-page .mx-subpanel{min-width:0}
 .mx-chapter-bar{display:flex;align-items:center;flex-wrap:wrap;gap:5px 8px;min-width:0}.mx-chapter-meta{display:flex;align-items:center;flex:none;flex-wrap:wrap;gap:4px}.mx-editor-panel{gap:6px;padding:9px}.mx-root .mx-editor-panel .mx-editor{padding:9px 10px}.mx-root-writing.mx-controls-folded .mx-book-workspace{flex:1 0 20rem;min-height:20rem}.mx-controls-folded .mx-writing-column{overflow:auto;gap:0}
 .mx-root textarea,.mx-constraints-editor-host,.mx-card p,.mx-history-surface pre{font-size:var(--mx-content-size)}
 @container(max-width:520px){.mx-topbar{gap:3px 6px}.mx-topbar-group+.mx-topbar-group{padding-inline-start:4px}.mx-topbar-book{flex-basis:12rem}.mx-topbar-chapter{flex-basis:8rem}.mx-partner-row{grid-template-columns:minmax(7rem,1fr) minmax(0,2fr)}.mx-partner-model{max-width:18ch}}
@@ -1863,7 +1888,7 @@ window.__ModuleLoader__.load({
       }, []);
       const onKeyDown = e => {
         e.stopPropagation();
-        if (e.key === 'Escape' && !busy) { e.preventDefault(); onCancel(); }
+        if (e.key === 'Escape' && !busy && !e.isComposing && !e.nativeEvent?.isComposing && e.keyCode !== 229) { e.preventDefault(); onCancel(); }
         if (e.key === 'Tab') {
           const items = [...ref.current.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]')];
           if (!items.length) { e.preventDefault(); return; }
@@ -1906,6 +1931,12 @@ window.__ModuleLoader__.load({
           const toolPages = ['tools', 'manage', 'context', 'advanced'];
           const chapterTitleButtonRef = useRef(null), workspaceNavigation = useRef(0), foldButtonRef = useRef(null), foldFocusPending = useRef(false);
           const addChapterInputRef = useRef(null), addChapterFocusPending = useRef(false);
+          const chapterDeleteTrigger = useRef(null), chapterManagementHeading = useRef(null), chapterDeleteFocusPending = useRef(false);
+          useEffect(() => { setNewChapter(''); }, [w?.book.id]);
+          useLayoutEffect(() => {
+            if (!chapterDeleteFocusPending.current) return;
+            chapterDeleteFocusPending.current = false; chapterManagementHeading.current?.focus({ preventScroll: true });
+          }, [w?.book.revision]);
           const utilityHeadingRef = useRef(null), utilityFocusPending = useRef('');
           useLayoutEffect(() => {
             if (utilityFocusPending.current !== tab) return;
@@ -1955,7 +1986,7 @@ window.__ModuleLoader__.load({
           const [constraintsHelpBook, setConstraintsHelpBook] = useState('');
           const constraintsHelpTrigger = useRef(null);
           const [manager, setManager] = useState(null), [deletionNotice, setDeletionNotice] = useState(null);
-          const uncertainDeletes = useRef(new Set());
+          const uncertainDeletes = useRef(new Set()), uncertainChapterWrites = useRef(new Set());
           const [cleanupPendingCount, setCleanupPendingCount] = useState(0);
           const [constraintsSourceBook, setConstraintsSourceBook] = useState('');
           const [constraintsCursor, setConstraintsCursor] = useState(null), [constraintsLimit, setConstraintsLimit] = useState('');
@@ -2144,8 +2175,10 @@ window.__ModuleLoader__.load({
               const book = await call('get', { bookId });
               if (!alive.current || epoch.current !== serial || !bookIsAvailable(book.id, deletedBookIds, unavailableBooks.current)) return false;
               commit(workspace(book, preferredChapter)); syncBookList(book); assignRecovery(readRecovery(book.id));
-              if (reconcileDelete) uncertainDeletes.current.delete(book.id);
-              setJob(readJob(book.id)); setPollError(false); setPollVersion(value => value + 1); switchTab(page);
+              if (reconcileDelete) { uncertainDeletes.current.delete(book.id); uncertainChapterWrites.current.delete(book.id); }
+              const remembered = readJob(book.id);
+              setJob(remembered && book.chapters.some(c => c.id === remembered.chapterId) ? remembered : null);
+              setPollError(false); setPollVersion(value => value + 1); switchTab(page);
               return true;
             } catch (e) { if (serial === epoch.current) messageError(e); return false; }
             finally { if (alive.current && epoch.current === serial) setLoading(false); }
@@ -2155,6 +2188,10 @@ window.__ModuleLoader__.load({
             if (!active || active.book.id !== book.id || !bookIsAvailable(book.id, deletedBookIds, unavailableBooks.current)) return false;
             if (book.revision < active.book.revision) return false;
             const conflicts = conflictingFields(active, book).filter(kind => kind !== cleared);
+            if (active.chapterId && !book.chapters.some(c => c.id === active.chapterId)) {
+              const projected = autosaveRecoveryWorkspace(active, autosaveRef.current?.pendingSnapshot);
+              if (dirty(projected).chapter && !conflicts.includes('chapter')) conflicts.push('chapter');
+            }
             if (conflicts.length) { setConflict({ book, fields: conflicts }); setError({ code: 'CONFLICT', message: t('conflictTitle') }); persist(active); return false; }
             const next = mergeWorkspace(active, book, cleared);
             // A refresh for an unrelated Host update is not an instruction to
@@ -2244,6 +2281,10 @@ window.__ModuleLoader__.load({
               next = mergeAutosaveAck(current.current, pending.snapshot, latest, pending.step);
             } else {
               const journal = autosaveRecoveryPayload(current.current, controller);
+              if (missingChapterDraft(latest, journal)) {
+                setConflict({ book: latest, fields: ['chapter'] });
+                throw Object.assign(new Error(t('chapterMissingDraft')), { code: 'CONFLICT' });
+              }
               next = restoredAutosaveWorkspace(workspace(latest, current.current.chapterId), journal);
               const fields = conflictingFields(next, latest);
               if (fields.length) { setConflict({ book: latest, fields }); throw Object.assign(new Error(t('conflictTitle')), { code: 'CONFLICT' }); }
@@ -2277,7 +2318,11 @@ window.__ModuleLoader__.load({
                 const latest = await call('get', { bookId });
                 if (!alive.current || epoch.current !== serial || current.current?.book.id !== bookId) return false;
                 const journal = autosaveRecoveryPayload(current.current, autosaveRef.current);
-                const recovered = restoredAutosaveWorkspace(workspace(latest, current.current.chapterId), journal);
+                if (scope !== 'all' && missingChapterDraft(latest, journal)) {
+                  setConflict({ book: latest, fields: ['chapter'] });
+                  setError({ code: 'CONFLICT', message: t('chapterMissingDraft') }); return false;
+                }
+                const recovered = scope === 'all' ? null : restoredAutosaveWorkspace(workspace(latest, current.current.chapterId), journal);
                 commit(scope === 'all' ? workspace(latest, current.current.chapterId) : mergeWorkspace(recovered, latest, scope));
                 syncBookList(latest);
               } catch (error) { messageError(error); return false; }
@@ -2312,15 +2357,16 @@ window.__ModuleLoader__.load({
             if (bookId && current.current?.book.id !== bookId)
               return transition(() => { if (stillRequested()) openBook(bookId, undefined, toolPages.includes(tab) ? tab : 'writing'); }, 'all', stillRequested);
           };
-          const changeChapter = chapterId => {
+          const changeChapter = (chapterId, page = toolPages.includes(tab) ? tab : 'writing') => {
             const stillRequested = navigationIntent();
             if (!current.current?.book.chapters.some(chapter => chapter.id === chapterId) || current.current.chapterId === chapterId) return;
             return transition(() => {
               const active = current.current;
               if (!stillRequested() || !active || active.chapterId === chapterId || !active.book.chapters.some(chapter => chapter.id === chapterId)) return;
-              epoch.current++; commit(workspace(active.book, chapterId)); resetSelection(); setError(null); setNotice(''); setConflict(null); switchTab(toolPages.includes(tab) ? tab : 'writing');
+              epoch.current++; commit(workspace(active.book, chapterId)); resetSelection(); setError(null); setNotice(''); setConflict(null); switchTab(page);
             }, 'all', stillRequested);
           };
+          const openManagedChapter = id => current.current?.chapterId === id ? navigatePage('writing') : changeChapter(id, 'writing');
           const download = (filename, mime, text) => {
             const url = URL.createObjectURL(new Blob([text], { type: mime }));
             const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.click();
@@ -2496,13 +2542,79 @@ window.__ModuleLoader__.load({
             if (!alive.current) return;
             epoch.current++; commit(workspace(book)); syncBookList(book); setNewTitle(''); switchTab('writing'); setJob(null); assignRecovery(null); setConflict(null); resetSelection(); setNotice(t('created'));
           }));
-          const addChapter = () => transition(() => withBusy(async () => {
-            const previousIds = new Set(current.current.book.chapters.map(c => c.id));
-            const book = await mutateRaw({ action: 'addChapter', title: newChapter.trim() });
-            if (!book) return;
-            const added = book.chapters.find(c => !previousIds.has(c.id));
-            epoch.current++; commit(workspace(book, added?.id)); setNewChapter(''); resetSelection(); switchTab('writing');
-          }));
+          const managedChapterProblem = (snapshot, structural = false) => {
+            if (!snapshot || !bookIsAvailable(snapshot.bookId, deletedBookIds, unavailableBooks.current)) return 'bookMissing';
+            const problem = managementProblem(current.current, snapshot, recoveryRef.current, conflict);
+            if (problem) return problem;
+            if (manager?.uncertain) return 'deleteUncertain';
+            if (uncertainChapterWrites.current.has(snapshot.bookId)) return 'chapterWriteUncertain';
+            if (structural && [job, ...liveJobs.current].some(item => item?.bookId === snapshot.bookId && (item.status === 'running' || item.settled === false))) return 'chapterStructureBusy';
+            return '';
+          };
+          const updateManagementAfterReceipt = (book, operation) => setManager(previous => previous?.snapshot.bookId === book.id ? {
+            ...previous, snapshot: managementSnapshot({ book }), typedTitle: '',
+            chapterEdit: operation.action !== 'moveChapter' && previous.chapterEdit?.id === operation.chapterId ? null : previous.chapterEdit,
+          } : previous);
+          const mutateManagedChapter = (snapshot, operation, noticeKey) => withBusy(async () => {
+            if (autosaveComposing.current) return;
+            const structural = operation.action === 'moveChapter' || operation.action === 'deleteChapter';
+            const problem = managedChapterProblem(snapshot, structural);
+            if (problem) throw new Error(t(problem === 'confirmChanged' ? 'manageStale' : problem));
+            const active = current.current, serial = epoch.current, index = active.book.chapters.findIndex(c => c.id === operation.chapterId);
+            if (operation.action !== 'addChapter' && index < 0) throw new Error(t('manageStale'));
+            let book;
+            try {
+              book = await call('mutate', { bookId: snapshot.bookId, expectedRevision: snapshot.revision, operation });
+              if (!alive.current || epoch.current !== serial || current.current?.book.id !== snapshot.bookId) return;
+              if (!chapterMutationReceipt(active.book, book, operation)) throw Object.assign(new Error(t('chapterWriteUncertain')), { code: 'RESPONSE' });
+            } catch (error) {
+              if (['NETWORK', 'RESPONSE', 'STORAGE', 'INTERNAL'].includes(error.code)) {
+                uncertainChapterWrites.current.add(snapshot.bookId);
+                if (alive.current) setConfirm(previous => previous?.chapterRemoval && previous.chapterRemoval.id === operation.chapterId ? { ...previous, uncertain: true } : previous);
+                throw Object.assign(new Error(t('chapterWriteUncertain')), { code: error.code });
+              }
+              throw error;
+            }
+            if (!adopt(book)) throw Object.assign(new Error(t('conflictTitle')), { code: 'CONFLICT' });
+            if (operation.action === 'addChapter') setNewChapter('');
+            if (structural) resetSelection();
+            if (operation.action === 'deleteChapter') {
+              if (active.chapterId === operation.chapterId) {
+                const nextId = (book.chapters[index] || book.chapters[index - 1])?.id;
+                const next = workspace(book, nextId);
+                const adopted = current.current;
+                commit({ ...next, card: adopted.card, baseCard: adopted.baseCard, constraintsEditor: adopted.constraintsEditor });
+              }
+              if (job?.bookId === book.id && job.chapterId === operation.chapterId) { setJob(null); setPollError(false); }
+              chapterDeleteFocusPending.current = true;
+              setConfirm(null);
+            }
+            updateManagementAfterReceipt(book, operation); setNotice(t(noticeKey));
+          });
+          const addChapter = () => {
+            const title = newChapter.trim();
+            if (title && title.length <= 300) return mutateManagedChapter(manager?.snapshot, { action: 'addChapter', title }, 'chapterAdded');
+          };
+          const renameManagedChapter = (chapterId, title) => {
+            const name = title.trim();
+            if (name && name.length <= 300) return mutateManagedChapter(manager?.snapshot, { action: 'updateChapter', chapterId, patch: { title: name } }, 'chapterRenamed');
+          };
+          const moveManagedChapter = (chapterId, direction) => mutateManagedChapter(manager?.snapshot, { action: 'moveChapter', chapterId, direction }, 'chapterMoved');
+          const requestChapterDeletion = (event, entry, number) => {
+            if (busyRef.current || autosaveComposing.current || /[\r\n]/.test(entry.title)) return;
+            const snapshot = manager?.snapshot, problem = managedChapterProblem(snapshot, true);
+            if (problem) { setError({ message: t(problem === 'confirmChanged' ? 'manageStale' : problem) }); return; }
+            chapterDeleteTrigger.current = event.currentTarget;
+            setError(null);
+            setConfirm({ title: t('deleteChapter'), body: t('chapterDeleteWarning'), label: t('deleteChapter'),
+              chapterRemoval: { id: entry.id, title: entry.title, number, snapshot, history: entry.history.length,
+                proposals: current.current.book.proposals.filter(item => item.chapterId === entry.id).length }, typedTitle: '', uncertain: false });
+          };
+          const confirmChapterDeletion = value => {
+            const entry = value?.chapterRemoval;
+            if (!entry || value.uncertain || entry.title !== value.typedTitle || autosaveComposing.current) return;
+            return mutateManagedChapter(entry.snapshot, { action: 'deleteChapter', chapterId: entry.id, confirmTitle: value.typedTitle }, 'chapterDeleted');
+          };
           const doImport = file => {
             if (!file) return;
             if (file.size > 40 * 1024 * 1024) { setError({ message: t('importTooLarge') }); return; }
@@ -2828,6 +2940,7 @@ window.__ModuleLoader__.load({
           // Resolve the previous recovery copy before new typing can overwrite it.
           const locked = busy || loading || !!recovery, running = job?.status === 'running';
           const manageProblem = manager && (!bookIsAvailable(manager.snapshot.bookId, deletedBookIds, unavailableBooks.current) ? 'bookMissing' : managementProblem(w, manager.snapshot, recovery, conflict));
+          const chapterOperationUncertain = !!w && uncertainChapterWrites.current.has(w.book.id);
           const deleteProblem = manager && (manageProblem || deletionProblem(w, manager.snapshot, manager.typedTitle, { recovery, conflict, jobs: [job, ...liveJobs.current] }));
           const modelDraftDirty = !!modelPrefs.settings && !sameModelSelection(modelPrefs.draft, modelPrefs.settings.selection);
           const modelProblem = modelGenerationProblem(modelPrefs, catalog, modelSaving);
@@ -3236,19 +3349,23 @@ window.__ModuleLoader__.load({
                 button(t('restore'), () => transition(() => confirmMutation(t('restoreTitle'), t('restoreHint'), { action: 'restoreChapter', chapterId: chapter.id, historyId: item.id }, t('restore'))), { className: 'mx-danger' })))));
           const renderConflict = () => {
             if (!conflict || !w) return null;
-            const latest = conflict.book, local = recoveryPayload(w), remote = {};
+            const latest = conflict.book, local = autosaveRecoveryPayload(w, autosaveRef.current || {}), remote = {};
+            const orphaned = missingChapterDraft(latest, local);
             if (d.chapter) remote.chapter = chapterFields(latest.chapters.find(c => c.id === w.chapterId));
             if (d.settings) remote.settings = bookFields(latest);
             if (d.card) remote.card = cardFields(latest.cards.find(c => c.id === w.card?.id));
             if (d.candidate) remote.candidate = latest.proposals.find(p => p.id === w.candidateId) || null;
-            return h('section', { className: 'mx-banner mx-error mx-stack', role: 'alert' }, h('h3', null, t('conflictTitle')), h('p', { className: 'mx-hint' }, t('conflictHint')),
+            return h('section', { className: 'mx-banner mx-error mx-stack', role: 'alert' }, h('h3', null, t('conflictTitle')), h('p', { className: 'mx-hint' }, t(orphaned ? 'chapterMissingDraft' : 'conflictHint')),
               h('details', { open: true }, h('summary', null, t('compare')), h('div', { className: 'mx-compare' },
                 h('div', null, h('h3', null, t('localChanges')), h('pre', null, JSON.stringify(local, null, 2))), h('div', null, h('h3', null, t('latestSaved')), h('pre', null, JSON.stringify(remote, null, 2))))),
               h('div', { className: 'mx-actions' }, button(t('downloadLocal'), downloadLocal), button(t('reviewLatest'), inspectConflict),
                 button(t('rebase'), () => {
+                  if (missingChapterDraft(latest, autosaveRecoveryPayload(current.current, autosaveRef.current || {}))) { setError({ message: t('chapterMissingDraft') }); return; }
                   if (d.candidate && latest.proposals.find(p => p.id === w.candidateId)?.state !== 'ready') { setError({ message: t('rebaseUnavailable') }); return; }
-                  setConfirm({ title: t('rebaseTitle'), body: t('rebaseHint'), label: t('rebase'), run: () => { commit(mergeWorkspace(current.current, latest, null, true)); setConflict(null); setConfirm(null); setError(null); setNotice(t('localOnly')); } });
-                }), button(t('refresh'), () => transition(() => openBook(w.book.id, w.chapterId)))));
+                  setConfirm({ title: t('rebaseTitle'), body: t('rebaseHint'), label: t('rebase'), run: () => {
+                    if (missingChapterDraft(latest, autosaveRecoveryPayload(current.current, autosaveRef.current || {}))) { setError({ message: t('chapterMissingDraft') }); return; }
+                    commit(mergeWorkspace(current.current, latest, null, true)); setConflict(null); setConfirm(null); setError(null); setNotice(t('localOnly')); } });
+                }, { disabled: locked || orphaned }), button(t('refresh'), () => transition(() => openBook(w.book.id, w.chapterId)))));
           };
           const renderCreate = () => h('div', { className: 'mx-row' }, h('div', { className: 'mx-grow' }, h(Field, { label: t('newBookTitle') }, h('input', { value: newTitle, maxLength: 300, disabled: locked, onChange: e => setNewTitle(e.target.value) }))), button(t('createBook'), create, { className: 'mx-primary', disabled: locked || !newTitle.trim() }));
           const renderImport = () => h(Field, { label: t('import'), hint: t('importHint') }, h('input', { type: 'file', accept: '.json,application/json', disabled: locked, onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; doImport(file); } }));
@@ -3264,13 +3381,38 @@ window.__ModuleLoader__.load({
           const renderBookTools = () => renderUtilityPage('workspaceTools',
             h('section', { className: 'mx-subpanel mx-stack' }, h('h3', null, t('createBook')), renderCreate(), renderImport()),
             w ? h(React.Fragment, null,
-              h('section', { className: 'mx-subpanel mx-stack' }, h('h3', null, t('addChapter')),
-                h('div', { className: 'mx-row' },
-                  h('div', { className: 'mx-grow' }, h(Field, { label: t('newChapterTitle') }, h('input', { ref: addChapterInputRef, value: newChapter, maxLength: 300, disabled: locked, onChange: e => setNewChapter(e.target.value) }))),
-                  button(t('addChapter'), addChapter, { disabled: locked || !newChapter.trim() }))),
               h('section', { className: 'mx-subpanel mx-stack' }, h('p', { className: 'mx-hint' }, t('exportHint')),
                 h('div', { className: 'mx-actions' }, button(t('exportJson'), () => exportBook('json')), button(t('exportMarkdown'), () => exportBook('markdown')), anyDirty && button(t('downloadLocal'), downloadLocal)))) :
               h('p', { className: 'mx-hint' }, t('chooseBookHint')));
+          const renderChapterManagement = () => {
+            const disabled = locked || !!manageProblem || !!manager.uncertain || chapterOperationUncertain;
+            const structural = managedChapterProblem(manager.snapshot, true);
+            const id = formId.current + '-chapter-management';
+            return h('section', { className: 'mx-subpanel mx-stack', 'aria-labelledby': id },
+              h('h3', { id, ref: chapterManagementHeading, tabIndex: -1 }, t('chapterManagement')),
+              h('div', { className: 'mx-row' },
+                h('div', { className: 'mx-grow' }, h(Field, { label: t('newChapterTitle') }, h('input', { ref: addChapterInputRef, value: newChapter, maxLength: 300, disabled, onChange: e => setNewChapter(e.target.value) }))),
+                button(t('addChapter'), addChapter, { disabled: disabled || !newChapter.trim() || w.book.chapters.length >= 2000 })),
+              h('p', { className: 'mx-hint' }, t('chapterStructureHint')),
+              structural === 'chapterStructureBusy' && h('p', { className: 'mx-hint', role: 'status' }, t(structural)),
+              !w.book.chapters.length ? h('p', { className: 'mx-hint' }, t('noChapters')) : h('ol', { className: 'mx-chapter-list mx-stack' }, w.book.chapters.map((entry, i) => {
+                const edit = manager.chapterEdit?.id === entry.id ? manager.chapterEdit : null;
+                const multiline = /[\r\n]/.test(entry.title);
+                const props = (action, options = {}) => ({ 'aria-label': t('chapterAction', { number: i + 1, title: entry.title, action: t(action) }), ...options });
+                return h('li', { key: entry.id, className: 'mx-stack' },
+                  h('div', { className: 'mx-row' }, h('strong', null, (i + 1) + '. ' + entry.title), badge(t(entry.status)), w.chapterId === entry.id && badge(t('chapterCurrent'))),
+                  h('div', { className: 'mx-actions' },
+                    button(t('openChapter'), () => openManagedChapter(entry.id), props('openChapter', { disabled: locked })),
+                    button(t('renameChapter'), () => setManager(previous => ({ ...previous, chapterEdit: edit ? null : { id: entry.id, title: multiline ? '' : entry.title } })), props('renameChapter', { 'aria-expanded': !!edit, disabled })),
+                    button(t('chapterUp'), () => moveManagedChapter(entry.id, 'up'), props('chapterUp', { disabled: disabled || !!structural || i === 0 })),
+                    button(t('chapterDown'), () => moveManagedChapter(entry.id, 'down'), props('chapterDown', { disabled: disabled || !!structural || i === w.book.chapters.length - 1 })),
+                    button(t('deleteChapter'), event => requestChapterDeletion(event, entry, i + 1), props('deleteChapter', { className: 'mx-danger', 'aria-haspopup': 'dialog', disabled: disabled || !!structural || multiline }))),
+                  multiline && h('p', { className: 'mx-hint' }, t('chapterDeleteMultiline')),
+                  edit && h('div', { className: 'mx-row' }, h('div', { className: 'mx-grow' }, h(Field, { label: t('chapterTitle') }, h('input', { autoFocus: true, value: edit.title, maxLength: 300, disabled,
+                    onChange: event => setManager(previous => ({ ...previous, chapterEdit: { id: entry.id, title: event.target.value } })) }))),
+                    button(t('save'), () => renameManagedChapter(entry.id, edit.title), { className: 'mx-primary', disabled: disabled || !edit.title.trim() || edit.title.trim() === entry.title })));
+              })));
+          };
           const renderManagementPage = () => renderUtilityPage('manageBooks', h('p', { className: 'mx-hint' }, t('manageBookHint')),
             !manager ? h('p', { className: 'mx-hint' }, t('chooseBookHint')) : h(React.Fragment, null,
               h('p', { className: 'mx-hint' }, t('bookIdentity', { id: manager.snapshot.bookId, revision: manager.snapshot.revision })),
@@ -3278,6 +3420,8 @@ window.__ModuleLoader__.load({
               manageProblem && h('p', { className: 'mx-banner', role: 'status' }, t(manageProblem === 'confirmChanged' ? 'manageStale' : manageProblem)),
               manager.uncertain && !error && h('p', { className: 'mx-banner', role: 'status' }, t('deleteUncertain')),
               error && h('p', { className: 'mx-banner mx-error', role: 'alert' }, error.message),
+              chapterOperationUncertain && !error && h('p', { className: 'mx-banner', role: 'status' }, t('chapterWriteUncertain')),
+              renderChapterManagement(),
               h('section', { className: 'mx-subpanel mx-stack', 'aria-label': t('renameBook') },
                 h('h3', null, t('renameBook')),
                 h(Field, { label: t('renameTitle') }, h('input', { value: manager.title, maxLength: 300, disabled: busy || !!manageProblem || manager.uncertain, onChange: e => setManager(previous => ({ ...previous, title: e.target.value })) })),
@@ -3343,7 +3487,10 @@ window.__ModuleLoader__.load({
           const pageButton = (value, label, dirty = false) => toolbarButton(value, t(label), () => navigatePage(value), {
             key: value, 'aria-pressed': tab === value, 'aria-controls': formId.current, disabled: busy || loading, dirty,
           });
-          const renderTopbar = () => h('header', { inert: constraintsHelpOpen || undefined, className: 'mx-topbar' },
+          const chapterDeleteConfirm = confirm?.chapterRemoval;
+          const closeConfirmation = () => { setConfirm(null); if (chapterDeleteConfirm) setError(null); };
+          const chapterDeleteBlock = chapterDeleteConfirm && managedChapterProblem(chapterDeleteConfirm.snapshot, true);
+          const renderTopbar = () => h('header', { inert: (constraintsHelpOpen || !!chapterDeleteConfirm) || undefined, className: 'mx-topbar' },
             w && h('nav', { className: 'mx-topbar-group', 'aria-label': t('pages') }, ['writing', 'constraints', 'cards', 'settings', 'history'].map(value =>
               pageButton(value, value, !!((value === 'writing' && (d.chapter || d.candidate)) || (value === 'cards' && d.card) || (value === 'settings' && tabDirty.settings) || (value === 'constraints' && tabDirty.constraints))))),
             h('div', { className: 'mx-topbar-group mx-topbar-book', role: 'group', 'aria-label': t('bookTools') }, renderBookPicker(),
@@ -3371,7 +3518,7 @@ window.__ModuleLoader__.load({
               default: return chapter ? h('div', { className: 'mx-grid' }, h('div', { ref: columnRef, className: 'mx-writing-column' }, renderAI(), renderEditor())) :
                 h('section', { className: 'mx-panel mx-stack' }, h('p', null, t('noChapters')), button(t('addChapter'), () => {
                   if (autosaveComposing.current) return;
-                  addChapterFocusPending.current = true; navigatePage('tools');
+                  addChapterFocusPending.current = true; navigatePage('manage');
                 }, { disabled: locked, 'aria-controls': formId.current }));
             }
           };
@@ -3391,7 +3538,7 @@ window.__ModuleLoader__.load({
             w && error.code !== 'REVIEW_REQUIRED' && button(t('autosaveRetry'), saveAll, { disabled: locked || !autosaveCanSave(w, autosaveRef.current) || !!conflict }),
             w && button(t('reviewLatest'), inspectConflict), button(t('dismiss'), () => setError(null), { disabled: false, ref: cancelRef }),
           ] }, h(React.Fragment, null, h('p', { role: 'alert' }, error.message), (autosaveRef.current?.failed || conflict) && h('p', { className: 'mx-hint' }, t('autosavePaused')), error.code && h('span', { className: 'mx-hint' }, error.code))),
-          h('div', { ref: contentRef, className: 'mx-content-pane', inert: constraintsHelpOpen || undefined },
+          h('div', { ref: contentRef, className: 'mx-content-pane', inert: (constraintsHelpOpen || !!chapterDeleteConfirm) || undefined },
           (tab !== 'writing' || !chapter) && notice && !activePolishJob && h('div', { className: 'mx-banner mx-info', role: 'status' }, notice),
           deletionNotice && h('section', { className: 'mx-banner mx-stack', role: deletionNotice.cleanupPending || deletionNotice.localCleanupPending || deletionNotice.refreshFailed ? 'alert' : 'status' },
             h('p', null, t(deletionNotice.cleanupPending ? 'deleteCleanupPending' : 'deleted', { title: deletionNotice.title })),
@@ -3428,10 +3575,16 @@ window.__ModuleLoader__.load({
             button(t('discardContinue'), async () => { const next = guard; if (await discardScope(next.scope)) { setGuard(null); next.run(); } }, { key: 'discard', className: 'mx-danger', disabled: busy }),
             button(t('saveContinue'), async () => { const next = guard; if (await saveAll()) { setGuard(null); next.run(); } }, { key: 'save', className: 'mx-primary', disabled: busy || !!conflict }),
           ] }, h(React.Fragment, null, h('p', null, t('unsavedHint')), error && h('p', { role: 'alert', className: 'mx-banner mx-error' }, error.message))),
-          confirm && h(Modal, { title: confirm.title, busy, onCancel: () => setConfirm(null), actions: cancelRef => [
-            button(t('cancel'), () => setConfirm(null), { key: 'cancel', ref: cancelRef, disabled: busy }),
-            button(confirm.label, confirm.run, { key: 'confirm', className: 'mx-primary', disabled: busy }),
-          ] }, h(React.Fragment, null, h('p', null, confirm.body), error && h('p', { role: 'alert', className: 'mx-banner mx-error' }, error.message))));
+          confirm && h(Modal, { title: confirm.title, busy, returnFocus: chapterDeleteConfirm ? chapterDeleteTrigger : undefined, onCancel: closeConfirmation, actions: cancelRef => [
+            button(t('cancel'), closeConfirmation, { key: 'cancel', ref: cancelRef, disabled: busy }),
+            button(confirm.label, chapterDeleteConfirm ? () => confirmChapterDeletion(confirm) : confirm.run, { key: 'confirm', className: chapterDeleteConfirm ? 'mx-danger' : 'mx-primary',
+               disabled: busy || !!chapterDeleteConfirm && (confirm.uncertain || confirm.typedTitle !== chapterDeleteConfirm.title || !!chapterDeleteBlock) }),
+          ] }, h(React.Fragment, null, h('p', null, confirm.body), chapterDeleteConfirm && h('div', { className: 'mx-stack' },
+             h('strong', null, t('chapterAction', { number: chapterDeleteConfirm.number, title: chapterDeleteConfirm.title, action: t('deleteChapter') })),
+             h('p', { className: 'mx-hint' }, t('chapterCountDetails', { history: chapterDeleteConfirm.history, proposals: chapterDeleteConfirm.proposals })),
+             chapterDeleteBlock && !error && h('p', { role: 'status', className: 'mx-hint' }, t(chapterDeleteBlock === 'confirmChanged' ? 'manageStale' : chapterDeleteBlock)),
+             h(Field, { label: t('chapterDeleteType') }, h('input', { value: confirm.typedTitle, disabled: busy || confirm.uncertain, autoComplete: 'off', spellCheck: false,
+               onChange: e => setConfirm(previous => previous?.chapterRemoval ? { ...previous, typedTitle: e.target.value } : previous) }))), error && h('p', { role: 'alert', className: 'mx-banner mx-error' }, error.message))));
         }
 
         ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'ycx-inspiration', locale: NS }, App));

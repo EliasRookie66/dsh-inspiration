@@ -38,7 +38,7 @@ const mutants = {
 if (process.env.DSH_AUTOSAVE_MUTANT) { assert(mutants[process.env.DSH_AUTOSAVE_MUTANT]); mutants[process.env.DSH_AUTOSAVE_MUTANT](); }
 const helperStart = clientSource.indexOf('    const equal ='), helperEnd = clientSource.indexOf('    const en =', helperStart);
 assert(helperStart >= 0 && helperEnd > helperStart);
-const f = new Function(clientSource.slice(helperStart, helperEnd) + '\nreturn {equal,workspace,dirty,isDirty,blankCard,cardFields,editWritingConstraints,autosaveStep,mergeAutosaveAck,createAutosaveController,recoveryPayload,restoredWorkspace,validRecovery,conflictingFields,mergeWorkspace,textareaValue,applyTextareaEdit,autosaveRecoveryWorkspace,autosaveRecoveryPayload,validAutosaveRecovery,restoredAutosaveWorkspace,autosaveOperationApplied,autosaveCanSave,validWritingConstraints,bookIsAvailable,applyConstraintsChanges,applyConstraintsInput,sameConstraintsDraft,constraintsHistorySnapshot,constraintsHistoryTarget};')();
+const f = new Function(clientSource.slice(helperStart, helperEnd) + '\nreturn {equal,workspace,dirty,isDirty,blankCard,cardFields,editWritingConstraints,autosaveStep,mergeAutosaveAck,createAutosaveController,recoveryPayload,restoredWorkspace,validRecovery,conflictingFields,mergeWorkspace,textareaValue,applyTextareaEdit,autosaveRecoveryWorkspace,missingChapterDraft,autosaveRecoveryPayload,validAutosaveRecovery,restoredAutosaveWorkspace,autosaveOperationApplied,autosaveCanSave,validWritingConstraints,bookIsAvailable,applyConstraintsChanges,applyConstraintsInput,sameConstraintsDraft,constraintsHistorySnapshot,constraintsHistoryTarget};')();
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
 async function bounded(promise, label) { let timer; try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Timed out: ' + label)), 12000); })]); } finally { clearTimeout(timer); } }
 function clock() {
@@ -454,6 +454,28 @@ try {
     const journal = h.recovery(); assert.equal(journal.card.title, ''); assert.equal(journal.baseCard.title, '已送出的卡片A'); assert.equal(journal.pendingCard.id, committed.cards[0].id);
     gate.release.resolve(); await pending; assert.equal(h.current.card.id, committed.cards[0].id); assert.equal(h.current.card.title, '');
     await h.finish(); assert.equal(h.sent.length, 1, 'Blank undo stays local instead of duplicate creation or invalid-write spam'); assert.equal((await get(b)).cards.length, 1); assert.equal(h.errors.length, 0); h.dispose();
+  }
+  {
+    let book = await freshBook('外部删章后不得把草稿发到同名章节');
+    const [{ id: removed, title, body }] = book.chapters;
+    book = await mutate(book, { action: 'addChapter', title });
+    const survivor = book.chapters[1].id;
+    book = await mutate(book, { action: 'updateChapter', chapterId: survivor, patch: { body } });
+    const h = appUi(book), gate = h.loseResponse();
+    h.app.changeField('chapter', 'body', body + '旧章私有草稿');
+    const pending = h.controller.flush();
+    const committed = await bounded(gate.entered.promise, 'old chapter write before lost receipt');
+    h.app.changeField('chapter', 'body', body); // Undo to a seemingly clean baseline.
+    assert.equal(f.isDirty(h.current), false);
+    const after = await mutate(committed, { action: 'deleteChapter', chapterId: removed, confirmTitle: title });
+    assert.equal(after.chapters[0].id, survivor);
+    gate.release.resolve(); await pending;
+    assert.equal(await h.app.saveAll(), false);
+    assert.equal(h.current.chapterId, removed);
+    assert.equal(h.recovery().chapterId, removed);
+    assert.equal(h.sent.length, 1, 'Retry must not send any mutation to the surviving chapter');
+    assert.deepEqual((await get(book)).chapters, after.chapters);
+    h.dispose();
   }
   assert.equal(modelCalls, 0); assert.equal(agentCreates, 0); assert.equal(preferenceWrites, 0); assert.equal(jobWrites, 0);
   assert.deepEqual((await post('list')).modelSettings, initialPreferences, 'Plugin and global model preferences unchanged');

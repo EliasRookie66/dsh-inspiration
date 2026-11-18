@@ -5,7 +5,7 @@ import { createBook, mutateBook } from '../core.js';
 
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8');
 const pure = source.slice(source.indexOf('    const equal ='), source.indexOf('    const en ='));
-const f = new Function(pure + '\nreturn {workspace,conflictingFields,mergeWorkspace,dirty,equal};')();
+const f = new Function(pure + '\nreturn {workspace,conflictingFields,mergeWorkspace,dirty,equal,autosaveRecoveryWorkspace};')();
 const popupStart = source.indexOf('\n          error &&') + 1, popupEnd = source.indexOf("          h('div', { ref: contentRef", popupStart);
 const popup = source.slice(popupStart, popupEnd);
 const gateText = popup.slice(0, popup.indexOf('h(Modal,')).trim().replace(/&&\s*$/, '');
@@ -13,7 +13,7 @@ const gate = new Function('error', 'guard', 'confirm', 'manager', 'polishRequire
 const adoptText = source.slice(source.indexOf('          const adopt ='), source.indexOf('          const loadLatest ='));
 function harness(workspace) {
   const current = { current: workspace }, errors = [], conflicts = [], saved = [];
-  const deps = { current, bookIsAvailable: () => true, deletedBookIds: new Set(), unavailableBooks: { current: new Map() },
+  const deps = { current, autosaveRef: { current: null }, autosaveRecoveryWorkspace: f.autosaveRecoveryWorkspace, bookIsAvailable: () => true, deletedBookIds: new Set(), unavailableBooks: { current: new Map() },
     dirty: f.dirty, equal: f.equal, conflictingFields: f.conflictingFields, mergeWorkspace: f.mergeWorkspace, setConflict: x => conflicts.push(x),
     setError: x => errors.push(x), persist: x => saved.push(x), commit: x => { current.current = x; },
     syncBookList: () => {}, setContext: () => {}, t: key => key };

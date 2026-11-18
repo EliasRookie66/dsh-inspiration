@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createBook, mutateBook, validateBook, buildContext, makeProposal, cloneImportedBook, exportMarkdown } from './core.js';
 import { optimizationContext, optimizationRewriteContext, ANALYSIS_LIMIT } from './optimization.js';
 
-export const VERSION = '0.4.10';
+export const VERSION = '0.4.11';
 const ID = /^[a-zA-Z0-9_-]{1,100}$/;
 export function fail(code, message) { throw Object.assign(new Error(message), { code }); }
 function checkId(id) { if (typeof id !== 'string' || !ID.test(id)) fail('VALIDATION', 'Invalid record id / 无效记录编号'); return id; }
@@ -195,9 +195,13 @@ export class NovelService {
           this.requireRevision(book, input.expectedRevision);
           const op = input.operation;
           if (!op || typeof op.action !== 'string') fail('VALIDATION', 'Missing mutation operation');
-          if (!user && ['acceptProposal', 'restoreChapter', 'acceptRevisionHunk', 'rejectRevisionHunk', 'acceptRevisionAll'].includes(op.action)) fail('AUTHOR_ONLY', 'The author must confirm this in the writing panel. / 此操作须由作者在写作面板确认。');
+          const changesChapterOrder = op.action === 'moveChapter' || op.action === 'deleteChapter';
+          if (!user && (changesChapterOrder || ['acceptProposal', 'restoreChapter', 'acceptRevisionHunk', 'rejectRevisionHunk', 'acceptRevisionAll'].includes(op.action))) fail('AUTHOR_ONLY', 'The author must confirm this in the writing panel. / 此操作须由作者在写作面板确认。');
           // Providers/tools can propose text but cannot fabricate completed generation records.
           if (op.action === 'addProposal') fail('AUTHOR_ONLY', 'Use generate to create a revision proposal');
+          if (changesChapterOrder && [...this.live.values()].some(j => j.bookId === book.id && unsettled(j))) {
+            fail('BUSY', 'Wait for generation to settle before moving or deleting a chapter / 请先等待生成完成，或取消任务并等其结束，再移动或删除章节');
+          }
           return this.store.commit(mutateBook(book, op));
         }
         case 'context': return (input.mode === 'revise' ? optimizationContext : buildContext)(await this.store.load(input.bookId), input.chapterId, {
