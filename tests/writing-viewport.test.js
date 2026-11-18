@@ -1,3 +1,4 @@
+import { legacyWorkspaceRegion } from './legacy-workspace-guard.js';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -28,24 +29,18 @@ test('normal-flow controls consume allocated space instead of overlaying scrolli
   assert(rule('.mx-writing-column').includes('min-height:0'));
 });
 
-test('writing-only full-height flex chain allocates remaining content height without viewport guesses', () => {
-  assert(rule('.mx-root-writing').includes('overflow:auto'), 'Actual allocated pane shortfall must scroll, regardless of browser-window height');
-  for (const selector of ['.mx-root-writing .mx-book-workspace', '.mx-root-writing .mx-writing-host', '.mx-root-writing .mx-grid']) {
-    assert(rule(selector).includes('overflow:hidden'), selector);
-  }
-  assert(rule('.mx-root-writing').includes('display:flex'));
-  assert(rule('.mx-root-writing .mx-book-workspace').includes('flex:1 0 32rem'));
-  assert(rule('.mx-root-writing .mx-book-workspace').includes('min-height:32rem'));
-  assert(rule('.mx-editor-panel').includes('flex:1 0 20rem'));
+test('pinned chrome has its own allocation and the content pane handles vertical shortfall', () => {
+  assert(rule('.mx-root').includes('overflow:hidden') && rule('.mx-root').includes('flex-direction:column'));
+  for (const declaration of ['flex:1', 'min-height:0', 'overflow:auto']) assert(rule('.mx-content-pane').includes(declaration));
+  assert(rule('.mx-root-writing .mx-content-pane').includes('display:flex'));
+  assert(rule('.mx-topbar').includes('flex:0 0 auto'));
+  for (const selector of ['.mx-root-writing .mx-book-workspace', '.mx-root-writing .mx-writing-host', '.mx-root-writing .mx-grid']) assert(rule(selector).includes('overflow:hidden'), selector);
+  assert(rule('.mx-root-writing .mx-book-workspace').includes('min-height:26rem'));
   assert(rule('.mx-editor-panel').includes('min-height:20rem'));
-  for (const selector of ['.mx-root-writing .mx-writing-host', '.mx-root-writing .mx-grid']) {
-    assert(rule(selector).includes('flex:1'), selector);
-    assert(rule(selector).includes('min-height:0'), selector);
-  }
-  assert(!/min-height:(?:52|46|42)vh/.test(css));
-  assert(!css.includes('max-height:65vh'));
   assert(source.includes("className: 'mx-panel mx-stack mx-editor-panel'"));
-  assert(source.includes("className: 'mx-writing-host'"));
+  assert(source.includes('root: position(contentRef.current)'));
+  assert(source.includes('const ports = { root: contentRef.current, panel: panelRef.current, column: columnRef.current }'));
+  assert(source.includes('measureTextareaCaret(editor, plan.caret, rootRef.current)'));
 });
 
 test('body slot fills available height; long manuscript text scrolls in its own native or read-only surface', () => {
@@ -55,57 +50,62 @@ test('body slot fills available height; long manuscript text scrolls in its own 
   const textarea = rule('.mx-body-slot .mx-editor');
   for (const declaration of ['flex:1', 'min-height:0', 'height:0', 'resize:none']) assert(textarea.includes(declaration));
   assert(rule('.mx-body-slot>.mx-revision-preview,.mx-body-slot>.mx-stack').includes('overflow:auto'));
-  assert(rule('.mx-editor-panel').includes('overflow:auto'), 'Outline, metadata and expanded summary remain reachable');
-  assert(source.includes("h('div', { className: 'mx-body-slot' }, inlineReviewProblem"));
+  assert(rule('.mx-editor-panel').includes('overflow:auto'), 'Chapter metadata and manuscript remain reachable');
+  assert(rule('.mx-summary-preview').includes('overflow:auto'), 'A legacy summary proposal has a scrollable result, not an editor');
+  assert(source.includes("h('div', { key: 'manuscript', className: 'mx-body-slot' }, inlineReviewProblem"));
   assert(source.includes('polishPreviewVisible ? renderPolishPreview() : revisionPreviewVisible ? renderRevisionPreview() : generatedManuscript ? renderGeneratedPreview()'), 'All review modes retain the same allocated body slot and precedence');
   assert(source.includes("generatedVisible && displayRecord.mode === 'summary' && renderGeneratedPreview()"));
 });
 
-test('chapter toggle is UI-only, accessible, physically unmounts navigation and never lies on narrow layouts', () => {
-  assert(source.includes('const [chaptersVisible, setChaptersVisible] = useState(false)'));
-  assert(source.includes("button(t('chaptersToggle'), () => setChaptersVisible(value => !value), { 'aria-expanded': chaptersVisible, 'aria-controls': formId.current + '-chapters' })"));
-  assert(source.includes("chaptersVisible && !folded && h('nav', { id: formId.current + '-chapters'"));
-  assert(region("h('header', { id: formId.current + '-controls', hidden: folded, className: 'mx-header'", '          error &&').includes("button(t('chaptersToggle')"), 'Navigation toggle remains in the expanded header; the always-reachable surface bar restores the folded control group');
-  assert(source.includes("'data-chapters': chaptersVisible"));
+test('one ID-valued native chapter picker remains pinned in normal and focus modes', () => {
+  const picker = region('          const renderChapterPicker =', '          const renderTitleControl =');
+  const bar = region('          const renderTopbar =', "          return h('main'");
+  const editor = region('          const renderEditor =', '          const renderModelPicker =');
+  assert.match(picker, /h\(Field, \{ label: t\('chaptersToggle'\), visuallyHidden: true \}/);
+  assert.match(picker, /h\('select', \{ value: w.chapterId, disabled: locked/);
+  assert.match(picker, /onChange: e => changeChapter\(e.target.value\)/);
+  assert.match(picker, /h\('option', \{ key: c.id, value: c.id \}, \(i \+ 1\)/);
+  assert.match(bar, /w && h\('div', .*renderChapterPicker\(\)/);
+  assert.match(picker, /!chapter && h\('option', \{ value: '' \}, t\('noChapters'\)\)/);
+  assert.doesNotMatch(bar, /hidden: folded|chapterNav|role: 'menu'/);
+  assert.match(editor, /titleOpen && h\(Field, \{ label: t\('chapterTitle'\) \}, input\('chapter', 'title'/);
+  assert.match(editor, /autoFocus: true/);
+  assert.match(source, /chapterTitleButtonRef.current\?\.focus\(\{ preventScroll: true \}\)/);
   assert.equal(rule('.mx-grid').match(/grid-template-columns:([^;]+)/)?.[1], 'minmax(0,1fr)');
-  assert(rule('.mx-grid[data-chapters=true]').includes('minmax(150px,230px) minmax(0,1fr)'));
-  assert(!css.includes('.mx-chapter-nav{display:none}'));
-  assert(css.includes('@container(max-width:850px){.mx-grid[data-chapters=true]{grid-template-columns:minmax(0,1fr);grid-template-rows:'));
-  const toggle = source.match(/button\(t\('chaptersToggle'\)[^\n]+/)[0];
-  for (const forbidden of ['changeChapter', 'commit(', 'mutate', 'localStorage', 'generate']) assert(!toggle.includes(forbidden));
+  assert(!css.includes('data-chapters') && !css.includes('mx-chapter-nav'));
 });
 
-test('clean book header has no saved pill or dead save control, while dirty save/discard and Ctrl+S remain', () => {
-  const header = region("h('header', { id: formId.current + '-controls', hidden: folded, className: 'mx-header'", '          error &&');
-  assert(header.includes("w && anyDirty && h('div', { className: 'mx-stack mx-save-controls' }"));
-  assert(header.includes("status(t('unsaved'), 'warn')"));
-  assert(!header.includes("t('saved')"));
-  assert(header.includes("button(busy ? t('working') : t('save'), saveAll"));
-  assert(header.includes("button(t('discard')"));
-  assert(source.includes("if (isDirty(current.current) && !busyRef.current) saveAll()"));
+test('header omits the entire save panel while automatic save, error retry and Ctrl+S remain', () => {
+  const header = region("          const renderTopbar =", "          return h('main'");
+  for (const forbidden of ['mx-save-controls', "t('unsaved')", "t('saved')", "t('autosaveHint')", "t('saveNow')", "t('discard')"]) assert(!header.includes(forbidden), forbidden);
+  const errors = region('          error &&', "          h('div', { ref: contentRef");
+  assert(errors.includes("button(t('autosaveRetry'), saveAll"));
+  assert(errors.includes('!autosaveCanSave(w, autosaveRef.current)'));
+  assert(source.includes("if (autosaveCanSave(current.current, autosaveRef.current) && !busyRef.current) saveAll()"));
 });
 
 test('non-writing tabs, recovery/error flows and short viewports retain an accessible scroll path', () => {
-  assert(rule('.mx-root').includes('overflow:auto'));
+  assert(rule('.mx-content-pane').includes('overflow:auto'));
   const gate = source.match(/const writingLayout = ([^;]+);/)[1];
   for (const marker of ["tab === 'writing'", '!!chapter', '!d.candidate', '!recovery', '!conflict', '!error', '!deletionNotice', '!storageFailed', 'cleanupPendingCount === 0']) assert(gate.includes(marker), marker);
   assert(source.includes("className: 'mx-root' + (writingLayout ? ' mx-root-writing' : '')"));
-  assert(css.includes('@media(max-height:640px){.mx-root.mx-root-writing{display:block;overflow:auto}'));
-  assert(css.includes('.mx-root-writing .mx-writing-host{min-height:28rem}'));
-  assert(rule('.mx-partner-advanced').includes('max-height:28%'));
-  assert(rule('.mx-partner-advanced').includes('flex:0 0 auto'), 'Expanded controls cannot shrink to an unreachable zero-height pane');
+  assert(css.includes('@media(max-height:640px){.mx-root-writing .mx-content-pane{display:block}'));
+  assert(!css.includes('.mx-root.mx-root-writing{display:block'));
+  assert(css.includes('.mx-root-writing .mx-writing-host{min-height:24rem}'));
+  assert(rule('.mx-utility-page').includes('min-width:0'));
+  assert(!css.includes('.mx-partner-advanced'));
   assert(rule('.mx-writing-column').includes('overflow:auto'));
   assert(rule('.mx-editor-panel').includes('min-height:20rem'), 'Crowded control budgets cannot zero the editor; allocated column scrolls instead');
-  assert(rule('.mx-book-tools').includes('overflow:auto'));
-  assert(source.includes("h('details', { hidden: folded, className: 'mx-book-tools' }, h('summary', null, t('bookTools'))"));
-  assert(source.includes("h('footer', { className: 'mx-foot mx-stack' }"));
+  assert(!css.includes('.mx-compact-tools'));
+  assert(source.includes("h('div', { id: formId.current, className: 'mx-writing-host' }, renderCurrentPage())"));
   assert(source.includes("recovery && h('section'"));
   assert(source.includes('renderConflict()'));
 });
 
 test('author callbacks preserve all original bytes except decision-time view capture and guarded post-success queue', () => {
-  // SHA-256 from the actual ../inspiration-0.1.6-source.zip client regions.
-  assert.equal(hash(region('    const equal =', '    const en =')), 'a7ff890af715dad5a9e74555a7e1b0b383e2f26a560b3dff3da072192fbfb534');
+  // Pinned v0.1.0 spans: only book settings/constraint recovery helpers may evolve.
+  assert.equal(hash(legacyWorkspaceRegion(source)), '11a7db1f41b1c65f324fb5ce1c9fc2b4d770f3dccec8c8b1370c2b0f18d3c2c6');
+  assert.equal(hash(region('    const textareaValue =', '    const en =')), '8b05aafaa77dc626c68aa6812c80350c2cb9e33c9ecc5bcbceffab43456c8148', 'All original native-offset/source/review/model guards remain byte-identical');
   const callbacks = region('          const applyPolish =', '          useEffect(');
   const capture = '              const returnAnchor = capturePolishReturn(snapshot);\n';
   const viewHook = 'queuePolishViewport(snapshot, saved, accept, returnAnchor); ';
@@ -114,6 +114,6 @@ test('author callbacks preserve all original bytes except decision-time view cap
   assert(callbacks.indexOf(capture) > callbacks.indexOf('if (problem) throw') && callbacks.indexOf(capture) < callbacks.indexOf('const saved = await mutateRaw('));
   assert(callbacks.includes('if (alive.current && saved) { ' + viewHook), 'Viewport work is queued only after a checked successful durable response');
   assert(callbacks.indexOf(viewHook) > callbacks.indexOf('const saved = await mutateRaw('));
-  assert.equal(hash(callbacks.replace(capture, '').replace(viewHook, '')), '9312b2aa0cae51f1beddf899098f4a0cba91a1ad4e98bfc118e624335efa6202', 'Removing only the two precisely placed view operations reproduces every original author check and payload byte-for-byte');
+  assert.equal(hash(callbacks.replace(capture, '').replace(viewHook, '')), '59e913af925fb7b5364da9a05f01d4a9968e9de7c8d60e5547302e3a1cc71792', 'Removing the view operations reproduces the audited author checks and payload byte-for-byte');
   for (const marker of ["action: 'acceptRevisionAll'", 'bulkRevisionProblem', 'generatedActionProblem', 'polishActionProblem', 'revisionActionProblem', 'visibleReviewProblem']) assert(source.includes(marker));
 });

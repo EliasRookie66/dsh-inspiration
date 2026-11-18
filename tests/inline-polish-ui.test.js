@@ -237,11 +237,13 @@ test('source wiring (not a visual test): selection handlers never request AI; ex
   assert(dispatch.includes('intent: selectionRef.current'));
   assert(dispatch.includes('composing: composing.current'));
   assert(dispatch.includes('custom && !direction.trim()'));
-  assert(dispatch.indexOf("call('generate'") < dispatch.indexOf("setMode('polish')"), 'Mode state is context only, not dispatch input');
+  assert.doesNotMatch(dispatch, /setMode\(|setInstruction\(/, 'The selection popup does not change the chapter task or its requirements');
   assert(!dispatch.includes('saveAll('));
   assert(!dispatch.includes('mutateRaw('));
   assert(!dispatch.includes('commit('));
-  assert(source.includes("const generate = () => mode === 'polish' ? startPolish(selectionRef.current"), 'Legacy Writing partner uses the identical request path');
+  const chapterGenerate = source.slice(source.indexOf('          const generate ='), source.indexOf('          const create ='));
+  assert.doesNotMatch(chapterGenerate, /startPolish|selectedSource|selectionRef/);
+  assert(chapterGenerate.includes('mode, instruction, selection: null'));
 });
 
 test('source wiring (not a visual test): toolbar is pointer anchored, keyboard reachable, dismissible and native selection preserving', () => {
@@ -333,7 +335,7 @@ test('bilingual user labels distinguish selected passage polish from full curren
   const dictionaries = new Function(source.slice(source.indexOf('    const en ='), source.indexOf('    const CSS =')) + '\nreturn {en,zh};')();
   assert.deepEqual(Object.keys(dictionaries.en).sort(), Object.keys(dictionaries.zh).sort());
   assert.equal(dictionaries.zh.polishCustom, '按需润色');
-  assert.equal(dictionaries.zh.modeRevise, '按需润色（全文）');
+  assert.equal(dictionaries.zh.modeRevise, '按需重写本章');
   assert(dictionaries.zh.reviseHint.includes('不是当前选区，也不是全书'));
   assert(dictionaries.en.reviseHint.includes('not the selected passage or the whole book'));
 });

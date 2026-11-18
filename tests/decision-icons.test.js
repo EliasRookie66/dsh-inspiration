@@ -33,6 +33,8 @@ test('static icon oracle detects unsafe emoji, unnamed, non-native, filled and f
     ["width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none'", "width: 16, height: 16, viewBox: '0 0 24 24', fill: 'currentColor'"],
     ['.mx-decision:focus-visible{outline:2px', '.mx-decision:focus{outline:2px'],
   ]) {
-    assert(source.includes(before)); const broken = source.replace(before, after); assert.notEqual(broken, source); assert.throws(() => iconContract(broken));
+    const anchor = before.startsWith('.mx-') ? 0 : source.indexOf('          const decisionButton =');
+    const from = source.indexOf(before, anchor); assert(from >= anchor);
+    const broken = source.slice(0, from) + after + source.slice(from + before.length); assert.notEqual(broken, source); assert.throws(() => iconContract(broken));
   }
 });

@@ -307,11 +307,12 @@ test('negative guard and cleanup assertions reject deliberately unsafe helper mu
 
 const enStart = source.indexOf('    const en ='), cssStart = source.indexOf('    const CSS =');
 const dicts = new Function(source.slice(enStart, cssStart) + ';return {en,zh};')();
-test('visible plugin names are exactly 灵感 and Inspiration in client and metadata locales', async () => {
+test('sidebar name stays 灵感 or Inspiration without a repeated page heading', async () => {
   for (const [lang, title] of [['zh', '灵感'], ['en', 'Inspiration']]) {
     const meta = JSON.parse(await readFile(new URL(`../locale/${lang}.json`, import.meta.url), 'utf8'));
     assert.equal(dicts[lang].nav, title);
-    assert.equal(dicts[lang].title, title);
+    assert(!Object.hasOwn(dicts[lang], 'title'));
+    assert(!Object.hasOwn(dicts[lang], 'subtitle'));
     assert.equal(meta.meta.title, title);
   }
 });

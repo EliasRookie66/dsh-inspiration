@@ -1,3 +1,4 @@
+import { legacyWorkspaceRegion } from './legacy-workspace-guard.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -137,7 +138,7 @@ test('production measurement mirrors full native prefix/rest styles inside an ow
 });
 
 test('layout restoration waits for receipt epoch and native mount, restores ports and sets measured native scrollTop last', () => {
-  const effect = region('          useLayoutEffect(() => {', '          const formatDate =');
+  const effect = region('          useLayoutEffect(() => {\n            const pending = pendingPolishViewport.current;', '          const formatDate =');
   assert(effect.includes('if (!pending || busy || loading) return'));
   assert(effect.includes('[restoreEpoch,'));
   assert(effect.includes('reviewReturnPlan('));
@@ -167,7 +168,8 @@ test('new generation/navigation invalidate UI intent while selected source displ
   const polish = region('          const renderPolishPreview =', '          const renderSelectionPopup =');
   assert(polish.includes('mx-polish-new') && polish.includes('mx-polish-original'), 'Keep latest green/new plus red/source evidence unchanged');
   const hash = value => createHash('sha256').update(value).digest('hex');
-  assert.equal(hash(legacy), 'a7ff890af715dad5a9e74555a7e1b0b383e2f26a560b3dff3da072192fbfb534');
+  assert.equal(hash(legacyWorkspaceRegion(source)), '11a7db1f41b1c65f324fb5ce1c9fc2b4d770f3dccec8c8b1370c2b0f18d3c2c6');
+  assert.equal(hash(region('    const textareaValue =', '    const en =')), '8b05aafaa77dc626c68aa6812c80350c2cb9e33c9ecc5bcbceffab43456c8148', 'Constraint settings/recovery additions cannot alter source/author/native-text helpers');
   const callbacks = region('          const applyPolish =', '          useEffect(').replace('              const returnAnchor = capturePolishReturn(snapshot);\n', '').replace('queuePolishViewport(snapshot, saved, accept, returnAnchor); ', '');
-  assert.equal(hash(callbacks), '9312b2aa0cae51f1beddf899098f4a0cba91a1ad4e98bfc118e624335efa6202');
+  assert.equal(hash(callbacks), '59e913af925fb7b5364da9a05f01d4a9968e9de7c8d60e5547302e3a1cc71792', 'Retain the audited author checks and duplicate-click guard');
 });

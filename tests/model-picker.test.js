@@ -206,19 +206,19 @@ test('source review: preference operations never commit workspace, mutate prose,
 
 test('source review: discoverable native themed model fields preserve aligned book controls and responsive widths', () => {
   const ai = source.slice(source.indexOf('          const renderAI ='), source.indexOf('          const renderSettings ='));
-  const pickerIndex = ai.indexOf('renderModelPicker()'), generateIndex = ai.indexOf("button(t('generate')");
-  assert(generateIndex >= 0 && pickerIndex > generateIndex, 'Compact Generate precedes the non-sticky advanced model settings');
-  assert(ai.includes("className: 'mx-partner-advanced"));
-  assert(ai.includes("'aria-expanded': advanced"), 'The full model settings remain explicitly discoverable');
-  assert(ai.includes('|| !!modelProblem ||'));
+  const actions = source.slice(source.indexOf('          const renderWritingActions ='), source.indexOf('          const renderTopbar ='));
+  assert(actions.includes("toolbarButton('generate', t('generate'), generate"));
+  assert(!ai.includes('renderModelPicker()'));
+  assert(source.includes("pageButton('advanced', 'advanced')"));
+  assert(source.includes("renderUtilityPage('advanced', renderModelPicker()"));
+  assert(actions.includes('|| !!modelProblem ||'));
   const picker = source.slice(source.indexOf('          const renderModelPicker ='), source.indexOf('          const renderAI ='));
   for (const key of ['modelMode', 'modelProvider', 'modelName', 'modelReasoning']) assert(picker.includes("h(Field, { label: t('" + key + "') }"));
   assert(picker.includes('custom && efforts.length > 0'));
   assert(picker.includes("h('option', { value: '' }, t('modelProviderDefault'))"));
   assert(picker.includes("button(modelSaving ? t('modelSaving') : t('modelApply'), applyModelPreference"));
   assert(picker.includes("t('modelScope')")); assert(picker.includes("t('modelNextGeneration')"));
-  assert(source.includes('.mx-book-row{align-items:flex-end}'));
-  assert(source.includes('.mx-root .mx-book-row select,.mx-root .mx-book-row>button{height:40px;min-height:40px}'));
+  assert(source.includes('.mx-root .mx-topbar select{min-height:32px;'));
   assert(source.includes('.mx-model-row{display:flex;align-items:flex-end;'));
   assert(source.includes('.mx-model-row>.mx-field,.mx-model-row>button{flex-basis:100%;width:100%}'));
   // These assertions review source wiring only; browser layout, keyboard/focus and

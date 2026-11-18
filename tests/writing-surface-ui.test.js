@@ -99,10 +99,13 @@ test('all mode generations suppress old controls and completed identity uses mat
 test('source wiring removes proposal section, keeps all inline modes and legacy draft resolution', () => {
   assert(!source.includes('renderCandidate'));
   assert(!source.includes("generate: '生成提案'"));
-  assert(source.includes("button(t('generate'), generate"));
+  assert(source.includes("toolbarButton('generate', t('generate'), generate"));
   assert(source.includes('generatedManuscript ? renderGeneratedPreview()'));
-  assert(source.includes("generatedVisible && displayRecord.mode === 'summary' && renderGeneratedPreview()"));
-  assert(source.includes("h('details', { open: generatedVisible && displayRecord.mode === 'summary'"));
+  const editor = source.slice(source.indexOf('const renderEditor ='), source.indexOf('const renderModelPicker ='));
+  const results = source.slice(source.indexOf('const renderAI ='), source.indexOf('const renderConstraints ='));
+  assert.doesNotMatch(editor, /t\('summary'\)|'chapter', 'summary'|renderGeneratedPreview\(\).*summary/);
+  assert(results.includes("generatedVisible && displayRecord.mode === 'summary' && renderGeneratedPreview()"), 'Existing summary proposals still show their actual preview outside the manuscript editor');
+  assert(results.indexOf('renderGeneratedPreview()') > results.indexOf("t('reviseRequirement')))),"), 'A folded task section must not hide a still-actionable result');
   assert(source.includes('generatedActionSnapshot(w, proposal)'));
   assert(source.includes("'aria-label': t('results'), value: proposal?.id || w.candidateId"), 'Chooser must identify the actually displayed durable outcome even before candidate selection catches up');
   const actions = source.slice(source.indexOf('const applyGenerated ='), source.indexOf('const applyRevisionHunk ='));
@@ -114,23 +117,60 @@ test('source wiring removes proposal section, keeps all inline modes and legacy 
   assert(!revision.includes("h('details'"), 'Original is directly visible below new text, not collapsed');
 });
 
+test('only draft/rewrite are selectable and their preview and generation send no selected range', async () => {
+  const modesStart = source.indexOf('const writingTaskModes ='), modeKeysStart = source.indexOf('const modeKeys =', modesStart);
+  const modes = new Function(source.slice(modesStart, modeKeysStart) + 'return writingTaskModes;')();
+  assert.deepEqual(modes, ['draft', 'revise']);
+  assert(source.includes('writingTaskModes.map(value =>'));
+  const changeCode = /onChange: e => \{ if \(writingTaskModes\.includes\(e\.target\.value\)\) setMode\(e\.target\.value\); \}/.exec(source)?.[0];
+  assert(changeCode);
+  const changes = [], setMode = value => changes.push(value);
+  const onChange = new Function('writingTaskModes', 'setMode', 'return ({ ' + changeCode + ' }).onChange;')(modes, setMode);
+  for (const value of ['draft', 'summary', 'continue', 'polish', 'revise']) onChange({ target: { value } });
+  assert.deepEqual(changes, ['draft', 'revise']);
+  const actions = source.slice(source.indexOf('          const contextKey ='), source.indexOf('          const create ='));
+  const build = new Function('env', 'with(env) {' + actions + '\nreturn {previewContext,generate};}');
+  const current = { current: fixture().w };
+  for (const mode of modes) {
+    const requests = [], jobs = [], report = [], instruction = '保留人物关系';
+    const env = { current, mode, instruction, busyRef: { current: false }, isDirty: () => false, alive: { current: true }, contextSequence: { current: 0 }, autosaveComposing: { current: false },
+      selectionRef: { current: { start: 1, end: 3, text: '测试' } }, withBusy: action => action(),
+      setContextBusy: () => {}, setContextError: error => { assert.equal(error, null); }, setContext: data => report.push(data),
+      modelGenerationProblem: () => '', modelPrefsRef: { current: { settings: { revision: 2 } } }, catalogRef: {}, modelSaveRef: {},
+      call: async (action, payload) => { requests.push({ action, payload }); return action === 'context' ? { prompt: 'book prompt' } : { jobId: 'test' }; },
+      reviewRef: {}, invalidateReviewReturn: () => {}, chapterOf: w => w.book.chapters[0], rememberJob: job => jobs.push(job),
+      setJob: () => {}, setPollError: () => {}, setNotice: () => {}, messageError: error => { throw error; },
+    };
+    const { previewContext, generate } = build(env);
+    await previewContext(); await generate();
+    assert.deepEqual(requests.map(({ action, payload }) => [action, payload.mode, payload.selection, payload.instruction]),
+      [['context', mode, null, instruction], ['generate', mode, null, instruction]]);
+    assert.equal(requests[1].payload.expectedRevision, current.current.book.revision);
+    assert.equal(requests[1].payload.expectedModelRevision, 2);
+    assert.equal(report[0].data.prompt, 'book prompt');
+    assert.equal(jobs[0].mode, mode);
+  }
+});
+
 test('CSS/static layout contracts: allocated normal-flow controls above editor, collapsible navigation and no hunk cards', () => {
   const rule = name => source.match(new RegExp('(?:^|\\})\\.' + name + '\\{([^}]+)\\}', 'm'))?.[1];
-  assert(rule('mx-root').includes('overflow:auto'));
+  assert(rule('mx-content-pane').includes('overflow:auto'));
   assert(rule('mx-grid').includes('grid-template-columns:minmax(0,1fr)'));
-  assert(source.includes('.mx-grid[data-chapters=true]{grid-template-columns:minmax(150px,230px) minmax(0,1fr)'));
+  assert(!source.includes('.mx-grid[data-chapters'));
   assert(rule('mx-writing-column').includes('overflow:auto'), 'A short allocated pane must scroll to its guaranteed-size editor instead of clipping it');
   assert(rule('mx-writing-partner').includes('position:static'));
   assert(!source.slice(source.indexOf('    const CSS ='), source.indexOf('    function Field(')).includes('position:sticky'));
-  assert(rule('mx-partner-advanced').includes('position:static'));
+  assert(rule('mx-utility-page').includes('min-width:0'));
+  assert(!source.includes('mx-partner-advanced'));
   assert(source.includes("h('div', { ref: columnRef, className: 'mx-writing-column' }, renderAI(), renderEditor())"));
   assert(!source.includes("const renderAI = () => h('aside'"));
   for (const declaration of ['border:0', 'border-radius:0', 'padding:0']) assert(rule('mx-revision-hunk').includes(declaration));
   assert(!source.includes('max-height:65vh'));
-  assert(!source.includes('.mx-chapter-nav{display:none}'), 'An explicitly expanded chapter navigator must not be silently hidden at narrow widths');
-  assert(source.includes('chaptersVisible &&'), 'Hidden navigation releases the entire column');
+  assert(!source.includes('mx-chapter-nav'), 'No persistent chapter sidebar');
+  assert(source.includes("className: 'mx-topbar-group mx-topbar-chapter'"));
   assert(source.includes("rows: 2, maxLength: 60000"));
-  assert(source.includes("'aria-expanded': advanced"));
+  assert(source.includes("pageButton('advanced', 'advanced')"));
+  assert(source.includes("'aria-pressed': tab === value"));
   assert(source.includes("'aria-hidden': true, focusable: 'false'"));
 });
 
@@ -175,12 +215,12 @@ test('live review identity prevents old enabled actions after generation starts,
 
 
 test('compact toolbar exposes failed/cancelled attempts and polling retry without opening advanced controls', () => {
-  const start = source.indexOf('const renderAI =');
-  const compact = source.slice(start, source.indexOf("advanced && h('div'", start));
+  const start = source.indexOf('const renderWritingFeedback =');
+  const compact = source.slice(start, source.indexOf('const renderWritingActions =', start));
   assert(compact.includes("['failed', 'cancelled'].includes(job.status)"));
-  assert(compact.includes("role: job.status === 'failed' ? 'alert' : 'status'"));
+  assert(compact.includes("role: terminal && job.status === 'failed' && !pollError ? 'alert' : 'status'"));
   assert(compact.includes("job.error ? ' · ' + String(job.error) : ''"));
   assert(compact.includes("t('previousResult')"), 'Earlier selected output is explicitly not output from the failed attempt');
-  assert(compact.includes("pollError && h('span'"));
-  assert(compact.includes("button(t('retry'), () => { setPollError(false); setPollVersion(v => v + 1); })"));
+  assert(compact.includes("pollError ? t('pollError')"));
+  assert(compact.includes("toolbarButton('refresh', t('retry'), () => { setPollError(false); setPollVersion(v => v + 1); })"));
 });

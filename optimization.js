@@ -9,12 +9,12 @@ const ANALYZE = '\n\n[当前执行阶段：按作者要素分析]\n先分析作�
 const fail = (message, code = 'BUDGET') => { throw Object.assign(new Error(message), { code }); };
 
 export function optimizationContext(book, chapterId, options) {
-  if (book.contextBudget - RESERVE < LIMITS.minBudget) fail('按需润色（全文）需为需求分析保留上下文，请将上下文预算提高到至少 6000 字符。');
+  if (book.contextBudget - RESERVE < LIMITS.minBudget) fail('按需重写本章需为需求分析保留上下文，请将上下文预算提高到至少 6000 字符。');
   const base = buildContext({ ...book, contextBudget: book.contextBudget - RESERVE }, chapterId, options);
   const prompt = base.prompt + ANALYZE;
   return { prompt, basePrompt: base.prompt, report: { ...base.report, budget: book.contextBudget, usedChars: prompt.length,
-    included: [...base.report.included, { label: '按需润色（全文）：需求分析阶段', chars: ANALYZE.length }],
-    warnings: [...base.report.warnings, '按需润色（全文）自动调用所选模型两次：先分析需求，再改写完整本章；结果仅为预览，逐处确认后才写入正文。已预留分析结果封装预算。'] } };
+    included: [...base.report.included, { label: '按需重写本章：需求分析阶段', chars: ANALYZE.length }],
+    warnings: [...base.report.warnings, '按需重写本章自动调用所选模型两次：先分析需求，再改写完整本章；结果仅为预览，逐处确认后才写入正文。已预留分析结果封装预算。'] } };
 }
 
 export function optimizationRewriteContext(context, analysis) {
@@ -23,5 +23,5 @@ export function optimizationRewriteContext(context, analysis) {
   const prompt = context.basePrompt + envelope;
   if (prompt.length > context.report.budget) fail('优化阶段完整提示超出上下文预算，已停止，未修改正文。');
   return { prompt, report: { ...context.report, usedChars: prompt.length,
-    included: [...context.report.included.slice(0, -1), { label: '按需润色（全文）：分析参考与改写阶段', chars: envelope.length }] } };
+    included: [...context.report.included.slice(0, -1), { label: '按需重写本章：分析参考与改写阶段', chars: envelope.length }] } };
 }

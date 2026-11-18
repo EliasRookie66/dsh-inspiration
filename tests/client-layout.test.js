@@ -11,22 +11,21 @@ const rule = selector => {
   return Object.fromEntries(match[2].split(';').filter(Boolean).map(declaration => declaration.split(':').map(value => value.trim())));
 };
 
-test('book selector and actions use scoped bottom alignment and identical control heights', () => {
-  assert.equal(source.split("className: 'mx-row mx-book-row'").length, 2);
-  const row = source.slice(source.indexOf("className: 'mx-row mx-book-row'"), source.indexOf("loading && h('p'", source.indexOf("className: 'mx-row mx-book-row'")));
-  for (const entry of ["label: t('book')", "button(t('manageBooks')", "button(t('refresh')"]) assert(row.includes(entry));
-  assert.equal(rule('.mx-book-row')['align-items'], 'flex-end');
-  for (const selector of ['.mx-root .mx-book-row select', '.mx-root .mx-book-row>button']) {
-    assert.equal(rule(selector).height, '40px');
-    assert.equal(rule(selector)['min-height'], '40px');
-  }
-  assert.equal(rule('.mx-book-row>button')['flex-shrink'], '0');
-  assert.equal(rule('.mx-book-row>button')['white-space'], 'nowrap');
+test('shared header contains the labelled book picker and direct book actions on every page', () => {
+  const header = source.slice(source.indexOf('          const renderTopbar ='), source.indexOf("          return h('main'"));
+  assert.match(header, /mx-topbar-book[\s\S]*renderBookPicker\(\)/);
+  for (const entry of ["pageButton('tools', 'workspaceTools')", "pageButton('manage', 'manageBooks')", "pageButton('context', 'context')", "pageButton('advanced', 'advanced')", "t('refresh'), refreshWorkspace"]) assert(header.includes(entry), entry);
+  assert.match(source, /renderBookPicker = \(\) => h\(Field, \{ label: t\('book'\), visuallyHidden: true \}/);
+  assert.match(source, /case 'tools': return renderBookTools\(\)/);
+  assert.doesNotMatch(source, /toolsOpen|toggleTools|beginManagement/);
+  assert(!source.includes('mx-book-row'));
+  assert.equal(rule('.mx-topbar-book>.mx-field')['min-width'], '0');
 });
 
-test('fix retains wrapping and does not change shared action-row alignment', () => {
+test('top groups wrap without narrowing or clipping the original shared action rows', () => {
+  assert.equal(rule('.mx-topbar')['flex-wrap'], 'wrap');
+  assert.equal(rule('.mx-topbar-group')['flex-wrap'], 'wrap');
+  assert.equal(rule('.mx-toolbar-hit').flex, 'none');
   assert.equal(rule('.mx-row')['flex-wrap'], 'wrap');
-  assert.equal(rule('.mx-row')['align-items'], 'center');
   assert.equal(rule('.mx-actions')['align-items'], 'center');
-  assert(!Object.hasOwn(rule('.mx-book-row'), 'flex-wrap'));
 });

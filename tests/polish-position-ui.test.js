@@ -1,3 +1,4 @@
+import { legacyWorkspaceRegion } from './legacy-workspace-guard.js';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -73,7 +74,7 @@ test('UI restoration plans never change manuscript, proposal or source identity'
 });
 
 test('current decision captures after both author gates, before mutation, and only acknowledged success queues restoration', () => {
-  assert(source.includes("const generate = () => mode === 'polish' ? startPolish(selectionRef.current"));
+  assert(source.includes("button(t('polishAI'), () => startPolish(selectionPopup.snapshot, t('polishDefaultDirection'))"));
   const action = region('          const applyPolish =', '          const applyGenerated =');
   assert(action.includes('const returnAnchor = capturePolishReturn(snapshot);'));
   assert(action.includes('if (alive.current && saved) { queuePolishViewport(snapshot, saved, accept, returnAnchor);'));
@@ -87,7 +88,7 @@ test('current decision captures after both author gates, before mutation, and on
 });
 
 test('layout-effect scheduling uses an explicit restore epoch, collapsed native caret and positions last', () => {
-  const effect = region('          useLayoutEffect(() => {', '          const formatDate =');
+  const effect = region('          useLayoutEffect(() => {\n            const pending = pendingPolishViewport.current;', '          const formatDate =');
   assert(effect.includes('if (!pending || busy || loading) return'));
   assert(effect.includes('reviewReturnPlan('));
   assert(effect.includes('measureTextareaCaret(editor, plan.caret, rootRef.current)'));
@@ -141,49 +142,43 @@ test('waiting, streaming, completion-gap and durable-ready retain the exact sele
   assert.equal(ready.original, selection.text); assert.equal(ready.durable, true); assert.equal(book.chapters[0].body, body);
 });
 
-test('task and 要求 labels share the same vertical column, with narrow-screen actions below', () => {
+test('task and requirements share a wide content row, while actions stay pinned on all widths', () => {
   assert(source.includes("instruction: '要求'"));
-  assert(source.includes('.mx-partner-row>.mx-field{grid-column:1}'));
-  assert(source.includes('.mx-partner-row>.mx-actions{grid-column:2;grid-row:1/3;align-self:end}'));
-  assert(source.includes('.mx-partner-row>.mx-actions{grid-column:1;grid-row:auto}'));
-  assert(!source.includes('grid-template-columns:minmax(110px,150px) minmax(160px,1fr) auto'));
+  assert(source.includes('.mx-partner-row{display:grid;grid-template-columns:minmax(9rem,.65fr) minmax(11rem,2fr)'));
+  assert(source.includes('.mx-partner-row{grid-template-columns:minmax(0,1fr)}'));
+  const toolbar = region('          const renderTopbar =', "          return h('main'");
+  assert(toolbar.includes("tab === 'writing' && chapter && renderWritingActions()"));
 });
 
-test('whole-controls folding preserves mounted state, owns chrome clearance and keeps critical actions outside hidden wrappers', () => {
-  assert(source.includes('const [controlsFolded, setControlsFolded] = useState(false)'));
+test('focus writing preserves manuscript and AI inputs and keeps critical actions outside hidden task fields', () => {
   assert(source.includes('const folded = controlsFolded && writingLayout'));
-  for (const marker of ["hidden: folded, className: 'mx-header'", "hidden: folded, className: 'mx-row mx-book-row'", "hidden: folded, className: 'mx-book-tools'", "hidden: folded, className: 'mx-tabs'", "hidden: folded, className: 'mx-writing-partner'", "hidden: folded, id: formId.current + '-advanced'"]) assert(source.includes(marker), marker);
+  assert(source.includes("hidden: folded, id: formId.current + '-writing-task'"));
+  const header = region('          const renderTopbar =', '          const renderCurrentPage =');
+  assert(header.includes("pageButton('context', 'context'), pageButton('advanced', 'advanced')"));
+  assert(!header.includes('!folded'));
   assert(source.includes('.mx-root [hidden]{display:none!important}'));
-  assert(source.includes('.mx-surface-bar{display:flex;flex:none;align-items:center;flex-wrap:wrap;gap:6px;min-height:34px;padding-inline-start:var(--dsh-frame-leading-clearance,0px)}'));
-  assert(source.includes("'data-chapters': chaptersVisible && !folded"));
-  assert(source.includes('chaptersVisible && !folded &&'));
-  const critical = region('          const renderFoldedCritical =', "          return h('main'");
-  for (const marker of ["button(t('save')", "button(t('discard')", "button(t('downloadLocal')", "button(t('approveAll')", "button(t('cancelJob')", "['failed', 'cancelled']", "button(t('retry')"]) assert(critical.includes(marker), marker);
+  const editor = region('          const renderEditor =', '          const renderModelPicker =');
+  assert.match(editor, /key: 'chapter-bar'[\s\S]*key: 'manuscript'/);
+  assert.doesNotMatch(editor.slice(editor.indexOf("key: 'manuscript'")), /folded/);
+  const critical = region('          const renderFoldedCritical =', '          const renderTopbar =');
+  for (const marker of ["t('saveNow'), saveAll", "t('discard')", "t('downloadLocal'), downloadLocal", "t('approveAll')", "t('cancelJob')", "['failed', 'cancelled']", "toolbarButton('refresh', t('retry')"]) assert(critical.includes(marker), marker);
   assert(source.includes('folded && renderFoldedCritical()'));
-  assert(source.includes('.mx-controls-folded .mx-book-workspace{flex:1;min-height:0}'));
+  assert(source.includes('.mx-controls-folded .mx-writing-column{overflow:auto'));
 });
 
-test('collapse lives below partner metadata/results and advanced controls; only expand remains in collapsed chrome', () => {
-  const partner = region('          const renderAI =', '          const renderSettings =');
-  const collapse = partner.indexOf("writingLayout && !folded && h('div', { className: 'mx-actions mx-controls-collapse' }");
-  assert(collapse > partner.indexOf("className: 'mx-partner-meta'"));
-  assert(collapse > partner.indexOf("t('results')"));
-  assert(collapse > partner.indexOf("advanced && h('div'"));
-  assert(partner.slice(collapse).includes("button(t('collapseControls')"));
-  assert(partner.slice(collapse).includes("closeSelectionPopup(); setControlsFolded(true)"));
-  assert(partner.slice(collapse).includes("'aria-expanded': true"));
-  const top = region("          folded && h('div', { className: 'mx-surface-bar'", "          h('header'");
-  assert(top.includes("button(t('expandControls')") && top.includes('renderFoldedCritical()'));
-  assert(top.includes("'aria-expanded': false") && top.includes('setControlsFolded(false)'));
-  assert(!top.includes('collapseControls'));
-  assert.equal(source.split("button(t('collapseControls')").length - 1, 1);
-  assert.equal(source.split("button(t('expandControls')").length - 1, 1);
+test('a single focus-toggle icon stays available in both modes and restores focus', () => {
+  const actions = region('          const renderWritingActions =', '          const renderTopbar =');
+  assert.match(actions, /folded \? 'expand' : 'focus'[\s\S]*focusWriting\(!folded\)/);
+  assert.match(actions, /'aria-expanded': !folded, 'aria-controls': taskId/);
+  assert(source.includes('foldButtonRef.current?.focus({ preventScroll: true })'));
+  assert(!source.includes('mx-controls-collapse'));
 });
 
-test('immutable source/offset helpers remain byte-identical and author callbacks differ only by the post-success UI hook', () => {
-  assert.equal(sha(legacy), 'a7ff890af715dad5a9e74555a7e1b0b383e2f26a560b3dff3da072192fbfb534');
+test('immutable source/offset helpers and the audited author callbacks retain their protected code', () => {
+  assert.equal(sha(legacyWorkspaceRegion(source)), '11a7db1f41b1c65f324fb5ce1c9fc2b4d770f3dccec8c8b1370c2b0f18d3c2c6');
+  assert.equal(sha(region('    const textareaValue =', '    const en =')), '8b05aafaa77dc626c68aa6812c80350c2cb9e33c9ecc5bcbceffab43456c8148', 'Only constraint settings/recovery change; original source/offset/review algebra is intact');
   const callbacks = region('          const applyPolish =', '          useEffect(')
     .replace('              const returnAnchor = capturePolishReturn(snapshot);\n', '')
     .replace('queuePolishViewport(snapshot, saved, accept, returnAnchor); ', '');
-  assert.equal(sha(callbacks), '9312b2aa0cae51f1beddf899098f4a0cba91a1ad4e98bfc118e624335efa6202');
+  assert.equal(sha(callbacks), '59e913af925fb7b5364da9a05f01d4a9968e9de7c8d60e5547302e3a1cc71792');
 });

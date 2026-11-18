@@ -11,7 +11,18 @@ npm run check
 npm test
 ```
 
-`npm test` 只执行 `tests/*.test.js`，覆盖实际领域逻辑、内存/临时存储适配、来源与作者确认守卫，以及纯 Client 计算和源码连接约束。它不运行下方五份安装运行时契约，不调用真实收费模型，不操作用户作品。
+`npm test` 只执行 `tests/*.test.js`，覆盖领域逻辑、临时存储适配、作者确认守卫、客户端纯函数及浏览器产物注册。它不执行下方八份安装运行时契约，也不调用付费模型或操作用户作品。
+
+修改连续 Markdown 编辑器时，先安装锁定的构建依赖，再验证 CodeMirror 的纯状态、选择及装饰契约。插件安装运行不需要这些依赖：
+
+```sh
+npm --prefix editor-build ci --ignore-scripts
+npm run build:client
+npm run check:client-build
+npm test
+```
+
+未安装构建依赖时，纯 CodeMirror 测试会显式跳过；其余测试仍需通过，打包产物仍必须和客户端源码同步。
 
 ## 安装运行时契约
 
@@ -28,6 +39,9 @@ ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" tests/desktop-transport-contract.m
 ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" tests/selection-runtime-contract.mjs
 ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" tests/optimization-runtime-contract.mjs
 ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" tests/inline-polish-runtime-contract.mjs
+ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" tests/writing-constraints-runtime-contract.mjs
+ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" tests/autosave-runtime-contract.mjs
+ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" tests/markdown-constraints-runtime-contract.mjs
 ```
 
 运行时契约使用隔离临时存储、测试适配器或明确的测试认证能力，验证实际安装模块的相应行为；不等于向真实服务商生成、操作真实书稿或验收当前 GUI。

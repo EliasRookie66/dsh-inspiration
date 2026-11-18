@@ -267,7 +267,8 @@ test('source wiring: immutable render snapshot flows through guarded one-click h
   assert(render.includes('renderOriginalContext(proposal.sourceBody, item)'), 'True insertions show source context, not a fabricated nonempty before');
   const apply = source.slice(source.indexOf('          const applyRevisionHunk ='), source.indexOf('          useEffect(() => {\n            alive.current = true;'));
   assert.equal(apply.split('revisionActionProblem(').length - 1, 2, 'Check before and inside the busy lock');
-  assert(apply.includes('busyRef.current || loading || !!manager || !!guard || !!confirm'));
+  assert(apply.includes('if (busyRef.current) return;'));
+  assert(apply.includes('loading || !!manager || !!guard || !!confirm'));
   assert(apply.includes('recovery: recoveryRef.current, conflict'));
   assert(apply.includes("action: accept ? 'acceptRevisionHunk' : 'rejectRevisionHunk'"));
   assert(apply.includes('proposalId: snapshot.proposalId, hunkId: snapshot.hunkId'));
@@ -309,7 +310,7 @@ test('source wiring: requirements, two-call phases, actual model snapshot and bi
   assert(source.includes("revise: 'modeRevise'"));
   assert(source.includes("const requirementMissing = mode === 'revise' && !instruction.trim()"));
   assert(source.includes("if (mode === 'revise' && !instruction.trim()) throw new Error(t('reviseRequirement'))"));
-  assert(source.includes('!canPolish || requirementMissing || !!modelProblem'));
+  assert(source.includes('running || requirementMissing || !!modelProblem'));
   assert(source.includes("['analyzing', 'optimizing'].includes(job.phase)"));
   assert(source.includes("typeof job.analysis === 'string'"));
   assert(source.includes('modelDescription(job.model)'));

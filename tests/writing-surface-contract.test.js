@@ -410,6 +410,110 @@ test('source wiring only: every decision checks latest visibility twice and manu
   for (const key of ['Review', 'Polish']) assert(client.includes('const setOriginal' + key + 'Key = value => { reviewRef.current = null; updateOriginal' + key + 'Key(value); };'));
 });
 
+// Execute the production review projection, click callbacks, busy lock and
+// write dispatch together. A deferred autosave wait permits the busy render
+// to run before inside-lock validation, as observed in the installed panel.
+function decisionHarness(data, clientSource = client) {
+  const slice = (from, to) => {
+    const start = clientSource.indexOf(from), end = clientSource.indexOf(to, start + from.length);
+    assert(start >= 0 && end > start);
+    return clientSource.slice(start, end);
+  };
+  const locked = slice('          const locked =', '          const manageProblem');
+  const review = slice('          reviewRef.current = proposal ?', '          const bulkSnapshot');
+  const project = new Function('env', `with(env) { ${locked}\n${review}\nreturn locked; }`);
+  const run = new Function('env', `with(env) {
+    ${slice('          const withBusy =', '          autosaveBindings.current =')}
+    ${slice('          const applyPolish =', '          useEffect(() => {\n            alive.current = true;')}
+    return {applyPolish,applyGenerated,applyRevisionAll,applyRevisionHunk};
+  }`);
+  const current = { current: data.w }, reviewRef = { current: null }, errors = [], requests = [], notices = [];
+  let release;
+  const wait = new Promise(resolve => { release = resolve; });
+  let saved = data.book;
+  const mode = data.proposal.mode;
+  const env = { ...f, current, reviewRef, w: data.w, proposal: data.proposal, tab: 'writing', busy: false, loading: false, job: null, awaitingOutcome: false,
+    manager: null, guard: null, confirm: null, polishRequirements: null, constraintsHelpOpen: false, conflict: null, recovery: null, recoveryRef: { current: null },
+    isRevision: mode === 'revise', isPolish: mode === 'polish', revisionPreviewVisible: mode === 'revise', polishPreviewVisible: mode === 'polish',
+    generatedVisible: mode !== 'revise' && mode !== 'polish', alive: { current: true }, busyRef: { current: false }, autosaveComposing: { current: false },
+    epoch: { current: 0 }, pendingLatest: { current: null }, autosaveRef: { current: { wait: () => wait } },
+    deletedBookIds: new Set(), unavailableBooks: { current: new Map() }, bookIsAvailable: () => true,
+    setBusy: busy => { env.busy = busy; project(env); }, setError: error => { if (error) errors.push(error); }, messageError: error => errors.push(error),
+    t: key => key, capturePolishReturn: () => null, queuePolishViewport: () => {}, setOriginalPolishKey: () => {}, setOriginalReviewKey: () => {},
+    resetSelection: () => {}, setNotice: key => notices.push(key),
+    call: async (action, request) => {
+      assert.equal(action, 'mutate'); requests.push(request);
+      assert.equal(request.bookId, saved.id);
+      if (request.expectedRevision !== saved.revision) throw Object.assign(new Error('Conflict'), { code: 'CONFLICT' });
+      saved = mutateBook(saved, request.operation); return saved;
+    },
+    adopt: book => { current.current = f.mergeWorkspace(current.current, book); return true; },
+  };
+  project(env);
+  return { ...run(env), env, reviewRef, release, errors, requests, notices, project: () => project(env),
+    get saved() { return saved; }, set saved(value) { saved = value; } };
+}
+
+for (const [mode, callback, operation, accept] of [
+  ['revise', 'applyRevisionHunk', 'acceptRevisionHunk', true], ['revise', 'applyRevisionHunk', 'rejectRevisionHunk', false],
+  ['revise', 'applyRevisionAll', 'acceptRevisionAll', true], ['polish', 'applyPolish', 'acceptProposal', true],
+  ['polish', 'applyPolish', 'rejectProposal', false], ['draft', 'applyGenerated', 'acceptProposal', true],
+  ['continue', 'applyGenerated', 'acceptProposal', true], ['summary', 'applyGenerated', 'acceptProposal', true],
+  ['draft', 'applyGenerated', 'rejectProposal', false],
+]) test(`${callback}/${mode}/${operation}: a busy render still settles exactly one author click`, async () => {
+  const data = fixture(mode), h = decisionHarness(data);
+  const make = { applyRevisionHunk: f.revisionHunkSnapshot, applyRevisionAll: f.bulkRevisionSnapshot, applyPolish: f.polishActionSnapshot, applyGenerated: f.generatedActionSnapshot }[callback];
+  const hunkId = callback === 'applyRevisionHunk' ? data.proposal.review.hunks[0].id : undefined;
+  const snapshot = make(data.w, data.proposal, hunkId);
+  const first = h[callback](snapshot, accept);
+  assert.equal(h.env.busyRef.current, true);
+  assert.equal(h.project(), true, 'Controls stay locked while the first decision is pending');
+  assert.equal(h.requests.length, 0);
+  await h[callback](snapshot, accept); // Rapid double-click/wrong stale event cannot start another action.
+  assert.deepEqual(h.errors, [], 'A repeated click during the first decision does not open an error dialog');
+  h.release();
+  assert.equal(await first, true, h.errors.map(error => `${error.code}: ${error.message}`).join('; '));
+  assert.deepEqual(h.errors, []);
+  assert.deepEqual(h.requests, [{ bookId: data.book.id, expectedRevision: data.book.revision, operation: { action: operation, proposalId: data.proposal.id, ...(hunkId ? { hunkId } : {}) } }]);
+  assert.equal(savedChapter(h.saved).body, accept ? expectedBody(data) : data.body);
+  assert.equal(h.saved.proposals[0].state, accept ? 'accepted' : 'rejected');
+  assert.equal(h.notices.length, 1);
+  await h[callback](snapshot, accept);
+  assert.equal(h.requests.length, 1, 'Old callback cannot replay after the saved revision advances');
+  assert.equal(h.errors[0]?.message, 'confirmChanged');
+});
+
+for (const [name, change] of [
+  ['hidden', h => { h.env.revisionPreviewVisible = false; }],
+  ['other page', h => { h.env.tab = 'constraints'; }],
+  ['another generation', h => { h.env.job = { status: 'running' }; }],
+  ['confirmation', h => { h.env.confirm = {}; }],
+  ['requirements dialog', h => { h.env.polishRequirements = {}; }],
+  ['recovery', h => { h.env.recovery = h.env.recoveryRef.current = {}; }],
+  ['unsaved chapter', h => { const w = h.env.current.current; h.env.current.current = { ...w, chapter: { ...w.chapter, body: w.chapter.body + '本地未保存' } }; }],
+  ['changed saved revision', h => { h.env.current.current = f.workspace(mutateBook(h.saved, { action: 'updateBook', patch: { premise: 'New saved premise' } })); }],
+]) test(`inside-lock recheck refuses ${name} without sending an author mutation`, async () => {
+  const data = fixture('revise'), h = decisionHarness(data);
+  const snapshot = f.revisionHunkSnapshot(data.w, data.proposal, data.proposal.review.hunks[0].id);
+  const first = h.applyRevisionHunk(snapshot, true);
+  change(h); h.project(); h.release();
+  assert.equal(await first, false);
+  assert.equal(h.errors[0]?.code, 'REVIEW_REQUIRED');
+  assert.equal(h.requests.length, 0); assert.equal(h.saved, data.book);
+});
+
+test('an unseen concurrent saved version still rejects a review by CAS without changing manuscript', async () => {
+  const data = fixture('revise'), h = decisionHarness(data);
+  const snapshot = f.bulkRevisionSnapshot(data.w, data.proposal);
+  const first = h.applyRevisionAll(snapshot);
+  const remote = mutateBook(data.book, { action: 'updateChapter', chapterId: data.id, patch: { body: data.body + '作者另存' } });
+  h.saved = remote; h.release();
+  assert.equal(await first, false);
+  assert.equal(h.errors[0]?.code, 'CONFLICT');
+  assert.equal(h.requests.length, 1); assert.equal(h.requests[0].expectedRevision, data.book.revision);
+  assert.equal(h.saved, remote); assert.equal(h.saved.proposals[0].state, 'ready');
+});
+
 test('bulk visible-result guard freezes exact durable identity and refuses stale, dirty, recovery, busy and forged outcomes without writing', () => {
   const { w, proposal, book, id } = fixture('revise'), snapshot = f.bulkRevisionSnapshot(w, proposal);
   assert(Object.isFrozen(snapshot)); assert(Object.values(snapshot).every(value => value === null || typeof value !== 'object'));
@@ -476,7 +580,8 @@ function checkRenderedActionWiring(text) {
   const secondGuard = callback.indexOf('generatedActionProblem(current.current, snapshot', firstGuard + 1);
   const mutate = callback.indexOf('await mutateRaw(');
   assert(firstGuard >= 0 && firstGuard < busy && secondGuard > busy && secondGuard < mutate, 'Render-bound snapshot is checked before and inside the write gate');
-  assert(callback.includes('busy: busyRef.current || loading || !!manager || !!guard || !!confirm'));
+  assert(callback.includes('if (busyRef.current) return;'));
+  assert(callback.includes('busy: loading || !!manager || !!guard || !!confirm'));
   assert(callback.includes('proposalId: snapshot.proposalId'));
   assert(!callback.includes('saveAll(') && !callback.includes('updateProposal'), 'Accept cannot silently save edited outcomes');
   assert(text.includes('const proposal = awaitingOutcome ? null : displayRecord;'), 'Do not render older candidate controls against newer current job output');

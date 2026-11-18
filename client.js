@@ -4,20 +4,22 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react');
     const h = React.createElement;
-    const { useState, useRef, useEffect, useLayoutEffect, useCallback, useSyncExternalStore } = React;
+    const { useState, useRef, useEffect, useLayoutEffect, useCallback, useSyncExternalStore, useMemo } = React;
     const NS = 'ycx-inspiration';
     const STORAGE = 'ycx-moxu:draft:v1:';
     const JOB_STORAGE = 'ycx-moxu:job:v1:';
     const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     const chapterFields = c => c ? ({ title: c.title, outline: c.outline, body: c.body, status: c.status, summary: c.summary }) : null;
-    const bookFields = b => ({ title: b.title, premise: b.premise, outline: b.outline, style: b.style, contextBudget: String(b.contextBudget) });
+    const copyWritingConstraints = rows => (rows || []).map(row => ({ ...row }));
+    const bookFields = b => ({ title: b.title, premise: b.premise, outline: b.outline, style: b.style, contextBudget: String(b.contextBudget), writingConstraints: copyWritingConstraints(b.writingConstraints) });
     const cardFields = c => c ? ({ id: c.id, kind: c.kind, title: c.title, content: c.content, status: c.status, pinned: c.pinned, fromChapter: String(c.fromChapter), toChapter: c.toChapter == null ? '' : String(c.toChapter), tags: c.tags.join(', ') }) : null;
     const blankCard = () => ({ kind: 'character', title: '', content: '', status: 'proposed', pinned: false, fromChapter: '1', toChapter: '', tags: '' });
     const chapterOf = w => w?.book.chapters.find(c => c.id === w.chapterId);
     const proposalOf = w => w?.book.proposals.find(p => p.id === w.candidateId);
+    const constraintsEditorDirty = w => !!w?.constraintsEditor && w.constraintsEditor.text !== w.constraintsEditor.baseText;
     const dirty = w => w ? ({
       chapter: !equal(w.chapter, w.baseChapter),
-      settings: !equal(w.settings, w.baseSettings),
+      settings: !equal(w.settings, w.baseSettings) || constraintsEditorDirty(w),
       card: !!w.card && !equal(w.card, w.baseCard),
       candidate: w.candidateId != null && w.candidate !== w.baseCandidate,
     }) : {};
@@ -30,7 +32,7 @@ window.__ModuleLoader__.load({
       const proposals = proposalsFor(book, chapter?.id);
       const proposal = proposals.find(p => p.state === 'ready') || proposals[0];
       return { book, chapterId: chapter?.id || '', chapter: fields, baseChapter: fields,
-        settings: bookFields(book), baseSettings: bookFields(book), card: null, baseCard: null,
+        settings: bookFields(book), baseSettings: bookFields(book), constraintsEditor: constraintsEditorState(book.writingConstraints), card: null, baseCard: null,
         candidateId: proposal?.id || '', candidate: proposal?.text || '', baseCandidate: proposal?.text || '' };
     }
     // A background proposal may advance book.revision without touching the author's drafts.
@@ -49,6 +51,8 @@ window.__ModuleLoader__.load({
       for (const [kind, field, base] of [['chapter', 'chapter', 'baseChapter'], ['settings', 'settings', 'baseSettings']]) {
         if (d[kind] && cleared !== kind) { fresh[field] = w[field]; if (!rebase) fresh[base] = w[base]; }
       }
+      if (d.settings && cleared !== 'settings' && w.constraintsEditor) fresh.constraintsEditor = {
+        ...w.constraintsEditor, baseText: rebase ? serializeConstraintsMarkdown(next.writingConstraints) : w.constraintsEditor.baseText };
       if (w.card && cleared !== 'card') {
         const server = w.card.id ? cardFields(next.cards.find(c => c.id === w.card.id)) : blankCard();
         fresh.card = d.card ? w.card : server;
@@ -65,7 +69,7 @@ window.__ModuleLoader__.load({
     function recoveryPayload(w) {
       const d = dirty(w), data = { version: 1, bookId: w.book.id, bookRevision: w.book.revision, chapterId: w.chapterId, savedAt: new Date().toISOString(), dirty: d };
       if (d.chapter) { data.chapter = w.chapter; data.baseChapter = w.baseChapter; }
-      if (d.settings) { data.settings = w.settings; data.baseSettings = w.baseSettings; }
+      if (d.settings) { data.settings = w.settings; data.baseSettings = w.baseSettings; if (w.constraintsEditor) data.constraintsEditor = { ...w.constraintsEditor }; }
       if (d.card) { data.card = w.card; data.baseCard = w.baseCard; }
       if (d.candidate) { data.candidateId = w.candidateId; data.candidate = w.candidate; data.baseCandidate = w.baseCandidate; }
       return data;
@@ -73,11 +77,960 @@ window.__ModuleLoader__.load({
     function validRecovery(r, bookId) {
       if (!r || r.version !== 1 || r.bookId !== bookId || !r.dirty || typeof r.chapterId !== 'string') return false;
       if (r.dirty.chapter && (!r.chapter || !r.baseChapter || !['title', 'outline', 'body', 'summary', 'status'].every(k => typeof r.chapter[k] === 'string' && typeof r.baseChapter[k] === 'string'))) return false;
-      if (r.dirty.settings && (!r.settings || !r.baseSettings || !['title', 'premise', 'outline', 'style', 'contextBudget'].every(k => typeof r.settings[k] === 'string' && typeof r.baseSettings[k] === 'string'))) return false;
+      if (r.dirty.settings && (!r.settings || !r.baseSettings || !['title', 'premise', 'outline', 'style', 'contextBudget'].every(k => typeof r.settings[k] === 'string' && typeof r.baseSettings[k] === 'string') || Object.hasOwn(r.settings, 'writingConstraints') !== Object.hasOwn(r.baseSettings, 'writingConstraints') || !validRecoveryConstraints(r.settings) || !validRecoveryConstraints(r.baseSettings))) return false;
+      if (Object.hasOwn(r, 'constraintsEditor') && (!r.dirty.settings || !validConstraintsEditor(r.constraintsEditor, r.settings.writingConstraints?.length ?? 0) ||
+          !constraintsDocumentMatches(r.constraintsEditor.parsedText, r.settings.writingConstraints) ||
+          !constraintsDocumentMatches(r.constraintsEditor.baseText, r.baseSettings.writingConstraints))) return false;
       if (r.dirty.card && (!r.card || !['kind', 'title', 'content', 'status', 'fromChapter', 'toChapter', 'tags'].every(k => typeof r.card[k] === 'string') || typeof r.card.pinned !== 'boolean')) return false;
       if (r.dirty.candidate && !['candidateId', 'candidate', 'baseCandidate'].every(k => typeof r[k] === 'string')) return false;
       return true;
     }
+    // Recovery accepts blank new rows as manual drafts; only explicit Save requires non-empty text.
+    function validRecoveryConstraints(settings) {
+      const field = Object.getOwnPropertyDescriptor(settings, 'writingConstraints');
+      return field ? field.enumerable && Object.hasOwn(field, 'value') && field.value !== undefined && validWritingConstraints(field.value, true) : !('writingConstraints' in settings);
+    }
+    function validWritingConstraints(rows, allowBlank = false) {
+      if (rows === undefined) return true;
+      if (!Array.isArray(rows) || Object.getPrototypeOf(rows) !== Array.prototype || rows.length > 64 || Reflect.ownKeys(rows).length !== rows.length + 1) return false;
+      const ids = new Set();
+      for (let index = 0; index < rows.length; index++) {
+        const slot = Object.getOwnPropertyDescriptor(rows, String(index));
+        if (!slot || !slot.enumerable || !Object.hasOwn(slot, 'value')) return false;
+        const row = slot.value;
+        if (!row || typeof row !== 'object' || Array.isArray(row) ||
+            ![Object.prototype, null].includes(Object.getPrototypeOf(row)) || Reflect.ownKeys(row).length !== 4 ||
+            !['id', 'category', 'content', 'enabled'].every(key => {
+              const field = Object.getOwnPropertyDescriptor(row, key);
+              return field && field.enumerable && Object.hasOwn(field, 'value');
+            }) ||
+            typeof row.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.id) ||
+            ids.has(row.id.toLowerCase()) || typeof row.enabled !== 'boolean' ||
+            typeof row.category !== 'string' || row.category.length > 80 || typeof row.content !== 'string' || row.content.length > 4000 ||
+            /[\uD800-\uDFFF]/u.test(row.category) || /[\uD800-\uDFFF]/u.test(row.content) || !allowBlank && (!row.category.trim() || !row.content.trim())) return false;
+        ids.add(row.id.toLowerCase());
+      }
+      return true;
+    }
+    // The whole Markdown document is a LOCAL journal, never a new Host patch field.
+    // Identity stays outside the author's clean Markdown: exact row occurrences
+    // survive reorders; a localized rule edit keeps that row, and a localized
+    // category-heading edit keeps its explicit contiguous source-group members.
+    // Identical duplicate occurrences retain occurrence order, not a fuzzy promise.
+    function serializeConstraintsMarkdown(rows = []) {
+      let last = null;
+      return rows.map(row => {
+        const category = /[\r\n]/.test(row.category) || row.category.startsWith('"') ? JSON.stringify(row.category) : row.category;
+        const heading = row.category === last ? '' : '- ' + category + '\n';
+        last = row.category;
+        return heading + '    - [' + (row.enabled ? 'x' : ' ') + '] ' + row.content.replace(/(\r\n|\r|\n)/g, '$1      ');
+      }).join('\n');
+    }
+    function constraintsEditorState(rows = []) {
+      const text = serializeConstraintsMarkdown(rows);
+      return { text, parsedText: text, baseText: text, error: '' };
+    }
+    function validConstraintsEditor(doc, rowCount = null) {
+      if (!doc || typeof doc !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(doc))) return false;
+      const anchors = Object.getOwnPropertyDescriptor(doc, 'anchoredStarts');
+      if (Reflect.ownKeys(doc).length !== (anchors ? 5 : 4) || !['text', 'parsedText', 'baseText', 'error'].every(key => {
+        const d = Object.getOwnPropertyDescriptor(doc, key);
+        return d && d.enumerable && Object.hasOwn(d, 'value') && typeof d.value === 'string' &&
+          (key === 'error' ? ['', 'constraintsMarkdownInvalid', 'constraintsMarkdownEmpty', 'constraintsCrypto', 'constraintsRuleStarter'].includes(d.value) : d.value.length <= 2000000);
+      }) || !doc.error && doc.text !== doc.parsedText) return false;
+      if (!anchors) return true; // v0.4.2 and older journals had no transaction coordinates.
+      const points = anchors.value;
+      if (!doc.error || !anchors.enumerable || !Object.hasOwn(anchors, 'value') || !Array.isArray(points) || Object.getPrototypeOf(points) !== Array.prototype ||
+          points.length > 64 || rowCount !== null && points.length !== rowCount || Reflect.ownKeys(points).length !== points.length + 1) return false;
+      const text = textareaValue(doc.text);
+      let prior = -1;
+      for (let index = 0; index < points.length; index++) {
+        const point = Object.getOwnPropertyDescriptor(points, String(index));
+        if (!point?.enumerable || !Object.hasOwn(point, 'value')) return false;
+        if (point.value === null) continue;
+        if (!Number.isSafeInteger(point.value) || point.value <= prior || point.value >= text.length || !' \t-*+'.includes(text[point.value])) return false;
+        prior = point.value;
+      }
+      return true;
+    }
+    function constraintsDocumentMatches(text, rows = []) {
+      if (text === serializeConstraintsMarkdown(rows)) return true;
+      const parsed = parseConstraintsMarkdown(text, rows, null, { allowEmpty: true });
+      return !parsed.error && equal(parsed.rows, rows);
+    }
+    function normalizedSourceOffsets(raw) {
+      const removed = [];
+      for (let index = raw.indexOf('\r\n'); index >= 0; index = raw.indexOf('\r\n', index + 2)) removed.push(index + 1);
+      return position => {
+        let lo = 0, hi = removed.length;
+        while (lo < hi) { const mid = (lo + hi) >>> 1; if (removed[mid] < position) lo = mid + 1; else hi = mid; }
+        return position - lo;
+      };
+    }
+    function remapConstraintStarts(points, changes) {
+      let delta = 0, changeIndex = 0;
+      return points.map(point => {
+        if (point == null) return null;
+        while (changeIndex < changes.length && changes[changeIndex].to <= point) {
+          const { from, to, insert } = changes[changeIndex++];
+          delta += insert.length - (to - from);
+        }
+        const change = changes[changeIndex];
+        return !change || change.from > point ? point + delta : null;
+      });
+    }
+    function parseConstraintsMarkdown(text, previousRows = [], cryptoProvider = globalThis.crypto, { allowEmpty = false, previousText = null, sourceChanges = null, sourceAnchors = null, exactEol = false, rejectPlaceholders = false } = {}) {
+      const bad = (error = 'constraintsMarkdownInvalid') => ({ rows: null, error, spans: [] });
+      if (typeof text !== 'string' || text.length > 2000000 || /[\uD800-\uDFFF]/u.test(text)) return bad();
+      if (!text.trim()) return previousRows.length && !allowEmpty ? bad('constraintsMarkdownEmpty') : { rows: [], error: '', spans: [] };
+      const re = /([^\r\n]*)(\r\n|\r|\n|$)/g;
+      let match, category = null, headingStart = -1, headingEnd = -1, categoryStart = -1, categoryEnd = -1, groupHasRule = true, current = null, headingStyle = false;
+      const records = [];
+      while ((match = re.exec(text)) && match[0]) {
+        const line = { text: match[1], eol: match[2], start: match.index }, heading = /^(#{1,2} |[-*+] )(.+)$/.exec(line.text);
+        const isHeading = heading && (!headingStyle || /^#/.test(line.text));
+        if (isHeading) {
+          if (!groupHasRule) return bad();
+          headingStyle = /^#/.test(line.text);
+          category = heading[2]; headingStart = line.start; headingEnd = line.start + line.text.length;
+          categoryStart = line.start + heading[1].length; categoryEnd = headingEnd;
+          if (category.startsWith('"')) { try { category = JSON.parse(category); } catch { return bad(); } }
+          if (typeof category !== 'string' || !category.trim() || category.length > 80) return bad();
+          groupHasRule = false; current = null;
+          continue;
+        }
+        const child = /^(?: {4}|\t)[-*+] (.*)$/.exec(line.text);
+        // Heading-style categories also accept ordinary unindented rule bullets.
+        const flat = headingStyle && /^[-*+] (.*)$/.exec(line.text);
+        const item = child || flat;
+        if (item && category !== null) {
+          let content = item[1], enabled = true;
+          const task = /^\[([ xX])\] (.*)$/.exec(content);
+          if (task) { enabled = task[1] !== ' '; content = task[2]; }
+          current = { category, headingStart, headingEnd, categoryStart, categoryEnd, content, enabled, start: line.start, end: line.start + line.text.length, lastEol: line.eol };
+          records.push(current); groupHasRule = true;
+          if (records.length > 64) return bad();
+        } else if (current && line.text.startsWith('      ')) {
+          current.content += current.lastEol + line.text.slice(6); current.lastEol = line.eol;
+          current.end = line.start + line.text.length;
+        } else if (!line.text.trim()) {
+          // Blank separator lines are not silently absorbed into the preceding rule.
+          current = null;
+        } else return bad();
+      }
+      if (!groupHasRule || !records.length || records.length > 64) return bad();
+      const used = new Set(), matches = new Map(), forcedFresh = new Set(), rows = [], spans = [], sourceGroupPairs = [];
+      const previousIds = new Set(previousRows.flatMap(row => typeof row?.id === 'string' ? [row.id.toLowerCase()] : []));
+      // An empty inner bullet is unfinished even if the checkbox was removed.
+      // Earlier saved literal dashes are grandfathered only at surviving source
+      // offsets; a new starter must not inherit the exemption of a deleted row.
+      const unfinished = new Set();
+      if (rejectPlaceholders) records.forEach((item, index) => {
+        if (item.content.trim() === '-') unfinished.add(index);
+      });
+      if (unfinished.size && typeof previousText !== 'string') return bad('constraintsRuleStarter');
+      if (typeof previousText === 'string') {
+        const before = textareaValue(previousText), after = textareaValue(text);
+        let start = 0, tail = 0;
+        while (start < before.length && start < after.length && before[start] === after[start]) start++;
+        while (tail < before.length - start && tail < after.length - start && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail++;
+        const old = parseConstraintsMarkdown(previousText, previousRows, null, { allowEmpty: true });
+        const beforeOffset = normalizedSourceOffsets(previousText), afterOffset = normalizedSourceOffsets(text);
+        const offset = (value, raw) => raw === previousText ? beforeOffset(value) : afterOffset(value);
+        const oldEnd = before.length - tail, newEnd = after.length - tail;
+        const identityBind = (newIndex, oldIndex) => {
+          const previous = previousRows[oldIndex];
+          if (!previous || !records[newIndex] || matches.has(newIndex) || used.has(previous.id.toLowerCase())) return false;
+          matches.set(newIndex, previous); used.add(previous.id.toLowerCase());
+          return true;
+        };
+        const stableBind = (newIndex, oldIndex) => {
+          const previous = previousRows[oldIndex], oldSpan = old.spans[oldIndex], item = records[newIndex];
+          if (!previous || !oldSpan || !item ||
+              previousText.slice(oldSpan.start, oldSpan.end) !== text.slice(item.start, item.end) ||
+              textareaValue(previous.content) !== textareaValue(item.content) || previous.enabled !== item.enabled) return false;
+          return identityBind(newIndex, oldIndex);
+        };
+        // Continuous editing can change identical adjacent lines or edit several
+        // disjoint ranges at once. Anchor surviving source occurrences by the
+        // actual transaction before using text-only prefix/suffix inference.
+        if (sourceAnchors || sourceChanges) {
+          const indexAt = new Map(records.map((item, index) => [offset(item.start, text), index]));
+          const anchors = sourceAnchors || remapConstraintStarts(old.spans.map(span => offset(span.start, previousText)), sourceChanges);
+          anchors.forEach((point, oldIndex) => {
+            if (point == null) {
+              // If a legacy literal dash lost its source anchor during this
+              // draft, do not let a new, now-filled starter recycle its ID.
+              const previous = previousRows[oldIndex];
+              if (rejectPlaceholders && previous?.content.trim() === '-') used.add(previous.id.toLowerCase());
+              return;
+            }
+            const newIndex = indexAt.get(point);
+            if (identityBind(newIndex, oldIndex) && previousRows[oldIndex].content.trim() === '-') unfinished.delete(newIndex);
+          });
+        }
+        if (unfinished.size) return bad('constraintsRuleStarter');
+        const oldPrefix = old.spans.map((span, index) => offset(span.end, previousText) <= start ? index : -1).filter(index => index >= 0);
+        const newPrefix = records.map((item, index) => offset(item.end, text) <= start ? index : -1).filter(index => index >= 0);
+        for (let index = 0; index < Math.min(oldPrefix.length, newPrefix.length); index++) stableBind(newPrefix[index], oldPrefix[index]);
+        const oldSuffix = old.spans.map((span, index) => offset(span.start, previousText) >= oldEnd ? index : -1).filter(index => index >= 0);
+        const newSuffix = records.map((item, index) => offset(item.start, text) >= newEnd ? index : -1).filter(index => index >= 0);
+        for (let index = 1; index <= Math.min(oldSuffix.length, newSuffix.length); index++) stableBind(newSuffix.at(-index), oldSuffix.at(-index));
+        // The first/last-difference hull can contain byte-identical interior groups
+        // when one full-source paste edits both sides. Pair source groups before
+        // any global duplicate matching so an inserted duplicate cannot steal an
+        // untouched interior occurrence's UUID.
+        const collectGroups = (items, raw) => {
+          const groups = [];
+          for (let first = 0; first < items.length;) {
+            let last = first;
+            while (last + 1 < items.length && items[last + 1].headingStart === items[first].headingStart) last++;
+            groups.push({ members: Array.from({ length: last - first + 1 }, (_, index) => first + index),
+              heading: raw.slice(items[first].headingStart, items[first].headingEnd),
+              core: raw.slice(items[first].headingStart, items[last].end) });
+            first = last + 1;
+          }
+          return groups;
+        };
+        const oldGroups = collectGroups(old.spans, previousText), newGroups = collectGroups(records, text);
+        const pairedOld = new Set(), pairedNew = new Set(), pairGroups = (oldGroupIndex, newGroupIndex) => {
+          if (pairedOld.has(oldGroupIndex) || pairedNew.has(newGroupIndex)) return;
+          pairedOld.add(oldGroupIndex); pairedNew.add(newGroupIndex);
+          sourceGroupPairs.push({ oldMembers: oldGroups[oldGroupIndex].members, newMembers: newGroups[newGroupIndex].members });
+        };
+        const pairUniqueGroups = field => {
+          const oldBy = new Map(), newBy = new Map();
+          oldGroups.forEach((group, index) => { if (!pairedOld.has(index)) oldBy.set(group[field], [...(oldBy.get(group[field]) || []), index]); });
+          newGroups.forEach((group, index) => { if (!pairedNew.has(index)) newBy.set(group[field], [...(newBy.get(group[field]) || []), index]); });
+          for (const [key, oldIndexes] of oldBy) {
+            const newIndexes = newBy.get(key);
+            if (oldIndexes.length === 1 && newIndexes?.length === 1) pairGroups(oldIndexes[0], newIndexes[0]);
+          }
+        };
+        pairUniqueGroups('core');
+        pairUniqueGroups('heading');
+        const oldHeadingGroups = new Map(), newHeadingGroups = new Map();
+        oldGroups.forEach((group, index) => { if (!pairedOld.has(index)) oldHeadingGroups.set(group.heading, [...(oldHeadingGroups.get(group.heading) || []), index]); });
+        newGroups.forEach((group, index) => { if (!pairedNew.has(index)) newHeadingGroups.set(group.heading, [...(newHeadingGroups.get(group.heading) || []), index]); });
+        for (const [heading, oldIndexes] of oldHeadingGroups) {
+          const newIndexes = newHeadingGroups.get(heading);
+          if (newIndexes?.length === oldIndexes.length) oldIndexes.forEach((oldGroupIndex, index) => pairGroups(oldGroupIndex, newIndexes[index]));
+        }
+        // Bind an exact whole group (including duplicate rules) or distinctive
+        // exact/semantic occurrences inside a paired changed group first.
+        for (const pair of sourceGroupPairs) {
+          const oldGroup = oldGroups.find(group => group.members === pair.oldMembers) || { members: pair.oldMembers };
+          const newGroup = newGroups.find(group => group.members === pair.newMembers) || { members: pair.newMembers };
+          if (oldGroup.core === newGroup.core && pair.oldMembers.length === pair.newMembers.length) {
+            pair.newMembers.forEach((newMember, index) => stableBind(newMember, pair.oldMembers[index]));
+            continue;
+          }
+          for (const semanticOnly of [false, true]) {
+            const oldBy = new Map(), newBy = new Map();
+            pair.oldMembers.filter(oldMember => !used.has(previousRows[oldMember].id.toLowerCase())).forEach(oldMember => {
+              const row = previousRows[oldMember], span = old.spans[oldMember];
+              const key = semanticOnly ? JSON.stringify([textareaValue(row.content), row.enabled]) : previousText.slice(span.start, span.end);
+              oldBy.set(key, [...(oldBy.get(key) || []), oldMember]);
+            });
+            pair.newMembers.filter(newMember => !matches.has(newMember)).forEach(newMember => {
+              const item = records[newMember];
+              const key = semanticOnly ? JSON.stringify([textareaValue(item.content), item.enabled]) : text.slice(item.start, item.end);
+              newBy.set(key, [...(newBy.get(key) || []), newMember]);
+            });
+            for (const [key, oldMembers] of oldBy) {
+              const newMembers = newBy.get(key);
+              // Equal duplicate counts are the same ordered occurrences inside
+              // this explicit source group. Reserve all of them before global
+              // matching; unequal counts remain ambiguous and are reconciled later.
+              if (newMembers?.length === oldMembers.length)
+                newMembers.forEach((newMember, index) => (semanticOnly ? identityBind : stableBind)(newMember, oldMembers[index]));
+            }
+          }
+        }
+        const oldIndex = old.spans.findIndex(span => start >= offset(span.start, previousText) && oldEnd <= offset(span.end, previousText));
+        const newIndex = records.findIndex(item => start >= offset(item.start, text) && newEnd <= offset(item.end, text));
+        // A single source-row edit (including checkbox typing) owns its ID even
+        // when it becomes textually identical to a neighboring duplicate.
+        if (oldIndex >= 0 && newIndex >= 0 && !matches.has(newIndex) && !used.has(previousRows[oldIndex].id.toLowerCase())) {
+          matches.set(newIndex, previousRows[oldIndex]); used.add(previousRows[oldIndex].id.toLowerCase());
+        } else {
+          // A heading group owns the surrounding separator bytes up to its
+          // neighboring groups, but a separator-only edit owns no heading. This
+          // lets one paste rename a heading and add/remove rules or blank lines
+          // without allowing the destination group to steal surviving UUIDs.
+          const headingGroup = (items, raw, changedEnd) => {
+            const rawLength = offset(raw.length, raw);
+            for (let first = 0; first < items.length;) {
+              let last = first;
+              while (last + 1 < items.length && items[last + 1].headingStart === items[first].headingStart) last++;
+              const headingStart = offset(items[first].headingStart, raw), headingEnd = offset(items[first].headingEnd, raw);
+              const ownedStart = first ? offset(items[first - 1].end, raw) : 0;
+              const ownedEnd = last + 1 < items.length ? offset(items[last + 1].headingStart, raw) : rawLength;
+              const intersects = (rangeStart, rangeEnd) => changedEnd > start
+                ? start < rangeEnd && changedEnd > rangeStart
+                : start >= rangeStart && start <= rangeEnd;
+              const touchesGroup = intersects(headingStart, headingEnd) || items.slice(first, last + 1)
+                .some(item => intersects(offset(item.start, raw), offset(item.end, raw)));
+              if (start >= ownedStart && changedEnd <= ownedEnd && touchesGroup)
+                return Array.from({ length: last - first + 1 }, (_, index) => first + index);
+              first = last + 1;
+            }
+            return null;
+          };
+          const oldMembers = headingGroup(old.spans, previousText, oldEnd), newMembers = headingGroup(records, text, newEnd);
+          if (oldMembers && newMembers) {
+            const remainingOld = oldMembers.filter(index => !used.has(previousRows[index].id.toLowerCase())), bind = (index, oldMember) => {
+              const previous = previousRows[oldMember];
+              matches.set(index, previous); used.add(previous.id.toLowerCase());
+              remainingOld.splice(remainingOld.indexOf(oldMember), 1);
+            };
+            // Deleted members stay reserved; a newly inserted duplicate must mint
+            // a UUID rather than recycling identity removed by this paste.
+            oldMembers.forEach(index => used.add(previousRows[index].id.toLowerCase()));
+            // Preserve exact rules that moved inside a renamed group before using
+            // source order for genuinely edited survivors.
+            for (const includeEnabled of [true, false]) newMembers.forEach(index => {
+              if (matches.has(index)) return;
+              const found = remainingOld.find(oldMember => textareaValue(previousRows[oldMember].content) === textareaValue(records[index].content) &&
+                (!includeEnabled || previousRows[oldMember].enabled === records[index].enabled));
+              if (found !== undefined) bind(index, found);
+            });
+            newMembers.forEach(index => {
+              if (matches.has(index)) return;
+              if (remainingOld.length) bind(index, remainingOld[0]);
+              else forcedFresh.add(index);
+            });
+          }
+        }
+      }
+      // Reserve all exact occurrences BEFORE assigning edited rows, so a rename
+      // cannot steal an existing ID from a distinct row moved elsewhere.
+      for (const includeEnabled of [true, false]) records.forEach((item, index) => {
+        if (matches.has(index) || forcedFresh.has(index)) return;
+        const previous = previousRows.find(row => !used.has(row.id.toLowerCase()) && row.category === item.category &&
+          textareaValue(row.content) === textareaValue(item.content) && (!includeEnabled || row.enabled === item.enabled));
+        if (previous) { matches.set(index, previous); used.add(previous.id.toLowerCase()); }
+      });
+      // Exact matches above also preserve rules moved across source groups. Only
+      // then use source order for genuinely edited survivors in paired groups;
+      // deleted identities stay reserved and unmatched insertions must be fresh.
+      for (const pair of sourceGroupPairs) {
+        const oldMembers = pair.oldMembers.filter(index => !used.has(previousRows[index].id.toLowerCase()));
+        const newMembers = pair.newMembers.filter(index => !matches.has(index) && !forcedFresh.has(index));
+        while (oldMembers.length && newMembers.length) {
+          const oldMember = oldMembers.shift(), newMember = newMembers.shift(), previous = previousRows[oldMember];
+          matches.set(newMember, previous); used.add(previous.id.toLowerCase());
+        }
+        oldMembers.forEach(index => used.add(previousRows[index].id.toLowerCase()));
+        newMembers.forEach(index => forcedFresh.add(index));
+      }
+      if (typeof previousText === 'string' && records.length === previousRows.length) records.forEach((item, index) => {
+        const previous = previousRows[index];
+        if (!matches.has(index) && !forcedFresh.has(index) && !used.has(previous.id.toLowerCase())) { matches.set(index, previous); used.add(previous.id.toLowerCase()); }
+      });
+      used.clear();
+      for (const [index, item] of records.entries()) {
+        const previous = matches.get(index);
+        let id = previous?.id, generated = false;
+        if (!id) { generated = true; try { id = cryptoProvider?.randomUUID?.(); } catch { return bad('constraintsCrypto'); } }
+        if (typeof id !== 'string') return bad('constraintsCrypto');
+        const key = id.toLowerCase();
+        if (generated && (previousIds.has(key) || used.has(key))) return bad('constraintsCrypto');
+        if (used.has(key)) return bad();
+        used.add(key);
+        const content = previous && !exactEol ? applyTextareaEdit(previous.content, item.content) :
+          previous && textareaValue(previous.content) === textareaValue(item.content) ? previous.content : item.content;
+        rows.push({ id, category: item.category, content, enabled: item.enabled });
+        spans.push({ id, start: item.start, end: item.end, headingStart: item.headingStart, headingEnd: item.headingEnd,
+          categoryStart: item.categoryStart, categoryEnd: item.categoryEnd });
+      }
+      return validWritingConstraints(rows) ? { rows, error: '', spans } : bad();
+    }
+    function editConstraintsMarkdown(w, bookId, value, cryptoProvider = globalThis.crypto) {
+      if (!w || w.book.id !== bookId) return w;
+      const editor = w.constraintsEditor || constraintsEditorState(w.settings.writingConstraints);
+      return writeConstraintsSource(w, editor, applyTextareaEdit(editor.text, value), cryptoProvider);
+    }
+    function writeConstraintsSource(w, editor, text, cryptoProvider, sourceChanges = null, exactEol = false, sourceAnchors = null) {
+      if (text.length > 2000000) throw new Error('constraintsMarkdownTooLong');
+      if (text === editor.text) return w;
+      const parsed = parseConstraintsMarkdown(text, w.settings.writingConstraints, cryptoProvider, { previousText: editor.parsedText,
+        sourceChanges: editor.text === editor.parsedText ? sourceChanges : null, exactEol, sourceAnchors, rejectPlaceholders: true });
+      return { ...w, constraintsEditor: { ...editor, text, parsedText: parsed.error ? editor.parsedText : text, error: parsed.error },
+        settings: parsed.error ? w.settings : { ...w.settings, writingConstraints: parsed.rows } };
+    }
+    // Editor transactions use LF/UTF-16 coordinates. Splice each changed range
+    // independently, so disjoint edits don't rewrite any untouched CRLF or CR.
+    function applyConstraintsChanges(source, update) {
+      if (!update || typeof update.text !== 'string' || textareaValue(source) !== update.before || !Array.isArray(update.changes)) return null;
+      if (update.text.length > 2000000) throw new Error('constraintsMarkdownTooLong');
+      const eol = source.match(/\r\n|\r|\n/)?.[0] || '\n';
+      let raw = 0, logical = 0, previous = 0, text = '';
+      const at = position => {
+        while (logical < position && raw < source.length) {
+          raw += source[raw] === '\r' && source[raw + 1] === '\n' ? 2 : 1;
+          logical++;
+        }
+        return raw;
+      };
+      const append = part => {
+        // A preserved lone CR followed by an independent LF must not turn into
+        // one logical newline when deleting the text that separated them.
+        if (text.endsWith('\r') && part.startsWith('\n')) text += '\n';
+        text += part;
+      };
+      for (const change of update.changes) {
+        if (!change || !Number.isSafeInteger(change.from) || !Number.isSafeInteger(change.to) ||
+            change.from < logical || change.to < change.from || change.to > update.before.length ||
+            typeof change.insert !== 'string' || change.insert.includes('\r')) return null;
+        append(source.slice(previous, at(change.from)));
+        append(change.insert.replace(/\n/g, eol));
+        previous = at(change.to);
+      }
+      append(source.slice(previous));
+      if (text.length > 2000000) throw new Error('constraintsMarkdownTooLong');
+      return textareaValue(text) === update.text ? text : null;
+    }
+    function sameConstraintsDraft(a, b) {
+      return !!a && !!b && a.text === b.text && a.parsedText === b.parsedText && a.error === b.error &&
+        equal(a.anchoredStarts, b.anchoredStarts) && (a.rows === b.rows || equal(a.rows, b.rows));
+    }
+    function constraintsHistorySnapshot(w) {
+      const { baseText: _baseline, ...draft } = w.constraintsEditor;
+      return { ...draft, rows: w.settings.writingConstraints };
+    }
+    function constraintsHistoryTarget(update, history) {
+      const saved = (update.origin === 'undo' || update.origin === 'redo') && history.get(update.version);
+      return saved && textareaValue(saved.text) === update.text ? saved : null;
+    }
+    function applyConstraintsInput(w, update, text, saved, cryptoProvider = globalThis.crypto) {
+      const editor = w.constraintsEditor;
+      // Restore the exact ordered identities and raw source from a trusted editor
+      // history token, but never restore a stale CAS baseline or unrelated settings.
+      if (saved) {
+        const { rows, ...draft } = saved;
+        return { ...w, constraintsEditor: { ...draft, baseText: editor.baseText }, settings: { ...w.settings, writingConstraints: rows } };
+      }
+      let anchors = editor.error && editor.anchoredStarts ? remapConstraintStarts(editor.anchoredStarts, update.changes) : null;
+      const next = writeConstraintsSource(w, editor, text, cryptoProvider, update.changes, true, anchors);
+      // Recover these actual edit coordinates together with an unfinished draft:
+      // its text alone can't distinguish where an identical new rule was typed.
+      if (next !== w && next.constraintsEditor.error && !editor.error) {
+        const old = parseConstraintsMarkdown(editor.text, w.settings.writingConstraints, null, { allowEmpty: true });
+        if (!old.error) {
+          const offset = normalizedSourceOffsets(editor.text);
+          anchors = remapConstraintStarts(old.spans.map(span => offset(span.start)), update.changes);
+        }
+      }
+      if (next !== w && next.constraintsEditor.error && anchors) next.constraintsEditor.anchoredStarts = anchors;
+      return next;
+    }
+    // Resolve the source slices that the rule toolbar and focused caret refer to.
+    function constraintVisualTargets(text, rows = [], cryptoProvider = globalThis.crypto) {
+      const source = typeof text === 'string' ? text : '';
+      if (!validWritingConstraints(rows)) return null;
+      if (!rows.length) return source.trim() ? null : { groups: [], rules: [] };
+      const parsed = parseConstraintsMarkdown(source, rows, cryptoProvider);
+      if (parsed.error || parsed.rows.length !== rows.length || parsed.rows.some((row, index) => {
+        const expected = rows[index];
+        return row.category !== expected.category || textareaValue(row.content) !== textareaValue(expected.content) || row.enabled !== expected.enabled;
+      })) return null;
+      const rules = [], groups = [];
+      for (const [index, span] of parsed.spans.entries()) {
+        const row = rows[index], prefix = /^(?:(?: {4}|\t))?[-*+] (?:\[[ xX]\] )?/.exec(source.slice(span.start, span.end));
+        if (!prefix) return null;
+        const start = span.start + prefix[0].length;
+        rules.push({ kind: 'rule', id: row.id, ids: [row.id], lineStart: span.start, start, end: span.end, expectedSlice: source.slice(start, span.end) });
+        const group = groups.at(-1);
+        if (group?.lineStart === span.headingStart) group.ids.push(row.id);
+        else groups.push({ kind: 'category', id: row.id, ids: [row.id], category: row.category, firstIndex: index,
+          lineStart: span.headingStart, start: span.categoryStart, end: span.categoryEnd, expectedSlice: source.slice(span.categoryStart, span.categoryEnd) });
+      }
+      return { groups, rules };
+    }
+    function editConstraintVisualBlock(w, bookId, target, value, cryptoProvider = globalThis.crypto) {
+      if (!w || w.book.id !== bookId || !target || typeof value !== 'string') return null;
+      const editor = w.constraintsEditor || constraintsEditorState(w.settings.writingConstraints), source = editor.text;
+      if (target.expectedText !== source || !['category', 'rule'].includes(target.kind) || !Array.isArray(target.ids) || !target.ids.length ||
+          !Number.isSafeInteger(target.start) || !Number.isSafeInteger(target.end) || target.start < 0 || target.end < target.start || target.end > source.length ||
+          source.slice(target.start, target.end) !== target.expectedSlice) return null;
+      const rows = copyWritingConstraints(w.settings.writingConstraints), indexes = target.ids.map(id => rows.findIndex(row => row.id === id));
+      if (indexes.some(index => index < 0) || new Set(indexes).size !== indexes.length || indexes.some((index, offset) => offset && index !== indexes[0] + offset)) return null;
+      let semanticValue, replacement;
+      if (target.kind === 'rule') {
+        if (target.ids.length !== 1) return null;
+        semanticValue = applyTextareaEdit(rows[indexes[0]].content, value);
+        rows[indexes[0]] = { ...rows[indexes[0]], content: semanticValue };
+        replacement = semanticValue.replace(/(\r\n|\r|\n)/g, '$1      ');
+      } else {
+        const category = rows[indexes[0]].category;
+        if (indexes.some(index => rows[index].category !== category)) return null;
+        semanticValue = applyTextareaEdit(category, value);
+        indexes.forEach(index => { rows[index] = { ...rows[index], category: semanticValue }; });
+        replacement = /[\r\n]/.test(semanticValue) || semanticValue.startsWith('"') ? JSON.stringify(semanticValue) : semanticValue;
+      }
+      const text = source.slice(0, target.start) + replacement + source.slice(target.end);
+      if (text.length > 2000000) throw new Error('constraintsMarkdownTooLong');
+      const schemaValid = validWritingConstraints(rows);
+      const parsed = schemaValid ? parseConstraintsMarkdown(text, rows, cryptoProvider, { previousText: editor.parsedText }) : null;
+      const syntaxValid = !!parsed && !parsed.error && parsed.rows.length === rows.length && parsed.rows.every((row, index) =>
+        row.category === rows[index].category && textareaValue(row.content) === textareaValue(rows[index].content) && row.enabled === rows[index].enabled);
+      const valid = schemaValid && syntaxValid;
+      const workspace = text === source && (valid || editor.error) ? w : {
+        ...w,
+        settings: valid ? { ...w.settings, writingConstraints: rows } : w.settings,
+        constraintsEditor: { ...editor, text, parsedText: valid ? text : editor.parsedText, error: valid ? '' : 'constraintsMarkdownInvalid' },
+      };
+      return { workspace, valid, value: textareaValue(semanticValue), target: { ...target, end: target.start + replacement.length, expectedText: text, expectedSlice: replacement } };
+    }
+    function markdownTextareaEdit(text, start, end, key, { shiftKey = false, composing = false } = {}) {
+      if (composing || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > text.length || !['Tab', 'Enter'].includes(key)) return null;
+      const value = textareaValue(text);
+      if (end > value.length || key === 'Enter' && shiftKey) return null;
+      const lineStart = start === 0 ? 0 : value.lastIndexOf('\n', start - 1) + 1;
+      if (key === 'Tab') {
+        // Markdown indentation is structural: indent the whole current line even
+        // with a collapsed caret, so a new top-level bullet can become a rule.
+        const blockEnd = end > start && value[end - 1] === '\n' ? end - 1 : end;
+        const nextLine = value.indexOf('\n', blockEnd), stop = nextLine < 0 ? value.length : nextLine;
+        const block = value.slice(lineStart, stop), parts = block.split('\n');
+        let firstDelta = 0, delta = 0;
+        const changed = parts.map((line, index) => {
+          const remove = shiftKey ? (/^(?: {1,4}|\t)/.exec(line)?.[0].length || 0) : 0;
+          const amount = shiftKey ? -remove : 4;
+          if (!index) firstDelta = amount;
+          delta += amount; return shiftKey ? line.slice(remove) : '    ' + line;
+        }).join('\n');
+        return { value: value.slice(0, lineStart) + changed + value.slice(stop), start: Math.max(lineStart, start + firstDelta), end: Math.max(lineStart, end + delta) };
+      }
+      const before = value.slice(lineStart, start), bullet = /^(\s*)([-*+] |\d+\. )(?:\[([ xX])\] )?/.exec(before);
+      if (!bullet) return null;
+      const prefix = bullet[1] + (/^\d/.test(bullet[2]) ? (Number(bullet[2].slice(0, -2)) + 1) + '. ' : bullet[2]) + (bullet[3] === undefined ? '' : '[ ] ');
+      if (before === bullet[0]) return { value: value.slice(0, lineStart) + '\n' + value.slice(end), start: lineStart + 1, end: lineStart + 1 };
+      const inserted = '\n' + prefix;
+      return { value: value.slice(0, start) + inserted + value.slice(end), start: start + inserted.length, end: start + inserted.length };
+    }
+    function constraintsDocumentKey(text, start, end, key, options = {}) {
+      if (options.composing) return null;
+      if (key === 'Enter') {
+        const value = textareaValue(text);
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > value.length) return null;
+        const lineStart = start === 0 ? 0 : value.lastIndexOf('\n', start - 1) + 1;
+        const nextLine = value.indexOf('\n', start), lineEnd = nextLine < 0 ? value.length : nextLine;
+        const currentLine = value.slice(lineStart, lineEnd);
+        const afterHeading = /^#{1,2} .+/m.test(value.slice(0, lineStart));
+        const rule = /^( {4}|\t)?[-*+] /.exec(currentLine);
+        const isRule = rule && (rule[1] || afterHeading);
+        const continuation = currentLine.startsWith('      ');
+        const insertLine = prefix => {
+          const inserted = '\n' + prefix, caret = start + inserted.length;
+          return { value: value.slice(0, start) + inserted + value.slice(end), start: caret, end: caret };
+        };
+        if (options.shiftKey && (isRule || continuation) || continuation && !/^ {6,}(?:[-*+] |\d+\. )/.test(currentLine)) return insertLine('      ');
+        if (!options.shiftKey && end <= lineEnd) {
+          const starter = '- [x] - ';
+          // The same unindented bullet is a category in list syntax but a
+          // sibling rule after a #/## heading. Keep the parser's distinction.
+          const category = /^(?:#{1,2}|[-*+]) (.+)$/.exec(value.slice(lineStart, start));
+          if (!isRule && category?.[1].trim() && end === lineEnd) return insertLine('    ' + starter);
+          const marked = isRule && /^\[[ xX]\] -(?: |$)/.exec(currentLine.slice(rule[0].length));
+          if (marked && start >= lineStart + rule[0].length + marked[0].length) return insertLine((rule[1] || '') + starter);
+        }
+      }
+      return markdownTextareaEdit(text, start, end, key, options);
+    }
+    // A small, bounded Markdown renderer produces data, never HTML. Remote
+    // images and raw HTML stay literal text; only these URL schemes become links.
+    function safeMarkdownUrl(url) {
+      if (typeof url !== 'string' || /[\u0000-\u0020\u007f]/.test(url)) return null;
+      return /^(?:https?:\/\/|mailto:)/i.test(url) ? url : null;
+    }
+    function markdownInline(text, depth = 0) {
+      if (depth >= 8 || text.length > 20000) return [{ type: 'text', text }];
+      const out = [], pattern = /(`+)([^`\n]+)\1|!\[([^\]\n]*)\]\(([^)\n]*)\)|\[([^\]\n]+)\]\(([^)\n]*)\)|(\*\*|__|~~|\*|_)([^\n]+?)\7|\\([\\`*_[\]{}()#+.!>~-])/g;
+      let offset = 0, item;
+      while ((item = pattern.exec(text))) {
+        if (item.index > offset) out.push({ type: 'text', text: text.slice(offset, item.index) });
+        if (item[1]) out.push({ type: 'code', text: item[2] });
+        else if (item[3] !== undefined) out.push({ type: 'text', text: '![' + item[3] + '](' + item[4] + ')' });
+        else if (item[5] !== undefined) {
+          const url = safeMarkdownUrl(item[6]);
+          out.push(url ? { type: 'a', url, children: markdownInline(item[5], depth + 1) } : { type: 'text', text: item[0] });
+        } else if (item[7]) out.push({ type: item[7].length === 2 ? item[7] === '~~' ? 'del' : 'strong' : 'em', children: markdownInline(item[8], depth + 1) });
+        else out.push({ type: 'text', text: item[9] });
+        offset = pattern.lastIndex;
+      }
+      if (offset < text.length) out.push({ type: 'text', text: text.slice(offset) });
+      return out;
+    }
+    function markdownBlocks(text, depth = 0) {
+      if (depth >= 8 || text.length > 20000) return [{ type: 'p', text }];
+      const lines = textareaValue(text).split('\n'), out = [];
+      let index = 0;
+      const special = line => /^(?:\s*$| {0,3}(?:#{1,6} |```|~~~|>|(?:[-*+] |\d+\. )|(?:-{3,}|\*{3,}|_{3,})\s*$))/.test(line);
+      while (index < lines.length) {
+        const line = lines[index];
+        if (!line.trim()) { index++; continue; }
+        const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+        if (fence) {
+          const content = []; index++;
+          while (index < lines.length && !new RegExp('^ {0,3}' + fence[1][0] + '{' + fence[1].length + ',}\\s*$').test(lines[index])) content.push(lines[index++]);
+          if (index < lines.length) index++;
+          out.push({ type: 'pre', text: content.join('\n') }); continue;
+        }
+        const heading = /^ {0,3}(#{1,6}) (.*)$/.exec(line);
+        if (heading) { out.push({ type: 'h' + heading[1].length, children: markdownInline(heading[2]) }); index++; continue; }
+        if (/^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { out.push({ type: 'hr' }); index++; continue; }
+        if (/^ {0,3}>/.test(line)) {
+          const content = [];
+          while (index < lines.length && /^ {0,3}>/.test(lines[index])) content.push(lines[index++].replace(/^ {0,3}> ?/, ''));
+          out.push({ type: 'blockquote', children: markdownBlocks(content.join('\n'), depth + 1) }); continue;
+        }
+        const bullet = /^( {0,3})([-*+] |\d+\. )(.*)$/.exec(line);
+        if (bullet) {
+          const ordered = /^\d/.test(bullet[2]), items = [];
+          while (index < lines.length) {
+            const next = /^( {0,3})([-*+] |\d+\. )(.*)$/.exec(lines[index]);
+            if (!next || /^\d/.test(next[2]) !== ordered) break;
+            const content = [next[3]], indent = next[1].length + next[2].length; index++;
+            while (index < lines.length && new RegExp('^ {' + indent + ',}').test(lines[index])) content.push(lines[index++].slice(indent));
+            const task = /^\[([ xX])\] (.*)$/.exec(content[0]);
+            if (task) content[0] = task[2];
+            items.push({ type: 'li', checked: task ? task[1] !== ' ' : null, children: markdownBlocks(content.join('\n'), depth + 1) });
+          }
+          out.push({ type: ordered ? 'ol' : 'ul', children: items }); continue;
+        }
+        const content = [line]; index++;
+        while (index < lines.length && !special(lines[index])) content.push(lines[index++]);
+        out.push({ type: 'p', children: markdownInline(content.join('\n')) });
+      }
+      return out;
+    }
+    function editConstraintStructureMarkdown(source, previousRows, rows, action) {
+      if (typeof source !== 'string' || !validWritingConstraints(previousRows) || !validWritingConstraints(rows)) return null;
+      const parsed = parseConstraintsMarkdown(source, previousRows, null, { previousText: source });
+      if (parsed.error || parsed.spans.length !== previousRows.length) return null;
+      const eolAfter = end => /^(\r\n|\r|\n)/.exec(source.slice(end))?.[1] || /\r\n|\r|\n/.exec(source)?.[0] || '\n';
+      const rulePrefix = span => {
+        const lineEnd = source.slice(span.start).search(/[\r\n]/), line = source.slice(span.start, lineEnd < 0 ? source.length : span.start + lineEnd);
+        return /^((?: {4}|\t)?[-*+] )(?:\[[ xX]\] )?/.exec(line);
+      };
+      let text = null;
+      if (action.type === 'edit' && action.field === 'enabled') {
+        const index = previousRows.findIndex(row => row.id === action.id), span = parsed.spans[index], prefix = span && rulePrefix(span);
+        if (!prefix) return null;
+        const replacement = prefix[1] + (rows[index].enabled ? '[x] ' : '[ ] ');
+        text = source.slice(0, span.start) + replacement + source.slice(span.start + prefix[0].length);
+      } else if (action.type === 'remove') {
+        const index = previousRows.findIndex(row => row.id === action.id), span = parsed.spans[index];
+        if (!span) return null;
+        if (!rows.length) text = '';
+        else {
+          const members = parsed.spans.filter(item => item.headingStart === span.headingStart);
+          let start = members.length === 1 ? span.headingStart : span.start, end = span.end;
+          if (members.length === 1) {
+            const firstGroup = parsed.spans[0]?.headingStart === span.headingStart;
+            if (firstGroup) end += /^(?:\r\n|\r|\n)(?:[ \t]*(?:\r\n|\r|\n))*/.exec(source.slice(end))?.[0].length || 0;
+            else start -= /(?:\r\n|\r|\n)(?:[ \t]*(?:\r\n|\r|\n))*$/.exec(source.slice(0, start))?.[0].length || 0;
+          } else {
+            const following = /^(\r\n|\r|\n)/.exec(source.slice(end))?.[1] || '';
+            if (following) end += following.length;
+            else start -= /(\r\n|\r|\n)$/.exec(source.slice(0, start))?.[1].length || 0;
+          }
+          text = source.slice(0, start) + source.slice(end);
+        }
+      } else if (action.type === 'move') {
+        const index = previousRows.findIndex(row => row.id === action.id), other = index + action.direction;
+        if (index < 0 || other < 0 || other >= previousRows.length) return null;
+        const left = Math.min(index, other), right = Math.max(index, other), leftSpan = parsed.spans[left], rightSpan = parsed.spans[right];
+        if (right !== left + 1 || !leftSpan || !rightSpan) return null;
+        if (leftSpan.headingStart === rightSpan.headingStart || previousRows[left].category === previousRows[right].category) {
+          const between = source.slice(leftSpan.end, rightSpan.start);
+          text = source.slice(0, leftSpan.start) + source.slice(rightSpan.start, rightSpan.end) + between +
+            source.slice(leftSpan.start, leftSpan.end) + source.slice(rightSpan.end);
+        } else {
+          const first = parsed.spans.findIndex(span => span.headingStart === leftSpan.headingStart);
+          let last = right;
+          while (last + 1 < parsed.spans.length && parsed.spans[last + 1].headingStart === rightSpan.headingStart) last++;
+          if (first < 0) return null;
+          const eol = eolAfter(parsed.spans[first].headingEnd), rebuilt = [];
+          let category = null;
+          for (const row of rows.slice(first, last + 1)) {
+            const original = previousRows.findIndex(previous => previous.id === row.id), span = parsed.spans[original];
+            if (original < 0 || !span) return null;
+            if (row.category !== category) {
+              if (rebuilt.length) rebuilt.push(eol, eol);
+              rebuilt.push(source.slice(span.headingStart, span.headingEnd), eol);
+              category = row.category;
+            } else rebuilt.push(eol);
+            rebuilt.push(source.slice(span.start, span.end));
+          }
+          text = source.slice(0, parsed.spans[first].headingStart) + rebuilt.join('') + source.slice(parsed.spans[last].end);
+        }
+      } else if (action.type === 'add') {
+        const addedIndex = rows.findIndex(row => !previousRows.some(previous => previous.id === row.id)), added = rows[addedIndex];
+        if (!added) return null;
+        if (!previousRows.length) text = serializeConstraintsMarkdown(rows);
+        else {
+          const anchorIndex = action.afterId == null ? previousRows.length - 1 : previousRows.findIndex(row => row.id === action.afterId);
+          const span = parsed.spans[anchorIndex], prefix = span && rulePrefix(span);
+          if (!span || !prefix || addedIndex !== anchorIndex + 1) return null;
+          const eol = eolAfter(span.end), content = textareaValue(added.content).replace(/\n/g, eol + '      ');
+          const rule = prefix[1] + (added.enabled ? '[x] ' : '[ ] ') + content;
+          if (added.category === previousRows[anchorIndex].category) text = source.slice(0, span.end) + eol + rule + source.slice(span.end);
+          else {
+            if (anchorIndex !== previousRows.length - 1) return null;
+            const heading = source.slice(span.headingStart, span.headingEnd), marker = /^(#{1,2} |[-*+] )/.exec(heading)?.[1];
+            if (!marker) return null;
+            const category = /[\r\n]/.test(added.category) || added.category.startsWith('"') ? JSON.stringify(added.category) : added.category;
+            text = source.slice(0, span.end) + eol + eol + marker + category + eol + rule + source.slice(span.end);
+          }
+        }
+      }
+      return text !== null && text.length <= 2000000 && constraintsDocumentMatches(text, rows) ? text : null;
+    }
+    function editWritingConstraints(w, bookId, action, cryptoProvider = globalThis.crypto) {
+      if (!w || w.book.id !== bookId || w.constraintsEditor?.error && w.constraintsEditor.text !== w.constraintsEditor.parsedText) return w;
+      const previousRows = copyWritingConstraints(w.settings.writingConstraints), rows = copyWritingConstraints(previousRows);
+      if (action.type === 'add') {
+        if (rows.length >= 64) throw new Error('constraintsLimit');
+        if (typeof cryptoProvider?.randomUUID !== 'function') throw new Error('constraintsCrypto');
+        const id = cryptoProvider.randomUUID(), category = action.category ?? '', content = action.content ?? '';
+        if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ||
+            previousRows.some(row => row.id.toLowerCase() === id.toLowerCase())) throw new Error('constraintsCrypto');
+        const added = { id, category, content, enabled: action.enabled ?? true };
+        if (!validWritingConstraints([added], !action.category && !action.content)) throw new Error('constraintsMarkdownInvalid');
+        const after = action.afterId == null ? rows.length - 1 : rows.findIndex(row => row.id === action.afterId);
+        if (action.afterId != null && after < 0) return w;
+        rows.splice(after + 1, 0, added);
+      } else {
+        const index = rows.findIndex(row => row.id === action.id);
+        if (index < 0) return w;
+        if (action.type === 'edit' && ['category', 'content', 'enabled'].includes(action.field)) rows[index] = { ...rows[index], [action.field]: action.value };
+        else if (action.type === 'remove') rows.splice(index, 1);
+        else if (action.type === 'move' && [-1, 1].includes(action.direction) && rows[index + action.direction]) {
+          [rows[index], rows[index + action.direction]] = [rows[index + action.direction], rows[index]];
+        } else return w;
+      }
+      if (equal(rows, previousRows)) return w;
+      const editor = w.constraintsEditor || constraintsEditorState(w.settings.writingConstraints);
+      const structural = action.type === 'add' || action.type === 'remove' || action.type === 'move' || action.type === 'edit' && action.field === 'enabled';
+      const preserved = structural && validWritingConstraints(rows) ? editConstraintStructureMarkdown(editor.text, previousRows, rows, action) : null;
+      if (structural && validWritingConstraints(rows) && preserved === null) throw new Error('constraintsMarkdownInvalid');
+      const text = preserved ?? serializeConstraintsMarkdown(rows);
+      return { ...w, settings: { ...w.settings, writingConstraints: rows },
+        constraintsEditor: { ...editor, text, parsedText: text, error: validWritingConstraints(rows) ? '' : 'constraintsMarkdownInvalid' } };
+    }
+    function restoredWorkspace(active, value) {
+      const next = workspace(active.book, value.dirty.chapter || value.dirty.candidate ? value.chapterId : active.chapterId);
+      for (const [kind, fields] of [['chapter', ['chapter', 'baseChapter']], ['settings', ['settings', 'baseSettings']], ['card', ['card', 'baseCard']], ['candidate', ['candidateId', 'candidate', 'baseCandidate']]]) {
+        if (value.dirty[kind]) for (const field of fields) next[field] = kind === 'settings'
+          ? { ...value[field], writingConstraints: copyWritingConstraints(value[field].writingConstraints === undefined ? active.book.writingConstraints : value[field].writingConstraints) } : value[field];
+      }
+      if (value.dirty.settings) {
+        next.constraintsEditor = value.constraintsEditor ? { ...value.constraintsEditor } : {
+          ...constraintsEditorState(next.settings.writingConstraints), baseText: serializeConstraintsMarkdown(next.baseSettings.writingConstraints) };
+      }
+      return next;
+    }
+    // Manual autosave is a separate serialized lane. It never generates or approves AI output.
+    function autosaveStep(w) {
+      if (!w) return null;
+      const text = (value, limit, required = false) => typeof value === 'string' && value.length <= limit &&
+        (!required || !!value.trim()) && !/[\uD800-\uDFFF]/u.test(value);
+      const chapterPatch = w.chapter ? patchOf(w.baseChapter, w.chapter) : {};
+      const chapterLimits = { title: 300, outline: 50000, body: 200000, summary: 40000 };
+      // Only manually edited chapter fields enter this lane; AI summaries remain proposals.
+      const chapter = Object.fromEntries(Object.entries(chapterPatch).filter(([key, value]) =>
+        key === 'status' ? ['draft', 'final'].includes(value) : Object.hasOwn(chapterLimits, key) && text(value, chapterLimits[key], key === 'title')));
+      if (Object.keys(chapter).length) return { kind: 'chapter', operation: { action: 'updateChapter', chapterId: w.chapterId, patch: chapter } };
+      const settingsPatch = patchOf(w.baseSettings, w.settings), settings = {};
+      for (const [key, value] of Object.entries(settingsPatch)) {
+        if (key === 'writingConstraints') { if (!w.constraintsEditor?.error && validWritingConstraints(value)) settings[key] = copyWritingConstraints(value); }
+        else if (key === 'contextBudget') {
+          const budget = typeof value === 'string' && value.trim() ? Number(value) : NaN;
+          if (Number.isSafeInteger(budget) && budget >= 1000 && budget <= 60000) settings[key] = budget;
+        } else if (Object.hasOwn({ title: 300, premise: 100000, outline: 200000, style: 50000 }, key) &&
+            text(value, { title: 300, premise: 100000, outline: 200000, style: 50000 }[key], key === 'title')) settings[key] = value;
+      }
+      if (Object.keys(settings).length) return { kind: 'settings', operation: { action: 'updateBook', patch: settings } };
+      if (dirty(w).card) {
+        const c = w.card, from = c.fromChapter.trim() ? Number(c.fromChapter) : NaN;
+        const to = c.toChapter.trim() ? Number(c.toChapter) : null;
+        const tags = c.tags.split(/[,，]/).map(tag => tag.trim()).filter(Boolean);
+        if (text(c.title, 300, true) && text(c.content, 50000) && ['world', 'character', 'timeline', 'thread', 'rule'].includes(c.kind) &&
+            ['proposed', 'confirmed'].includes(c.status) && typeof c.pinned === 'boolean' && Number.isSafeInteger(from) && from >= 1 &&
+            (to === null || Number.isSafeInteger(to) && to >= from) && tags.length <= 50 && tags.every(tag => text(tag, 100, true))) {
+          const card = { ...c, fromChapter: from, toChapter: to, tags };
+          return { kind: 'card', operation: { action: 'saveCard', card } };
+        }
+      }
+      return null;
+    }
+    function autosaveOperationApplied(book, snapshot, step) {
+      const target = step.kind === 'chapter' ? book.chapters.find(c => c.id === snapshot.chapterId) :
+        step.kind === 'settings' ? book : book.cards.find(c => c.id === step.operation.card.id);
+      const values = step.kind === 'card' ? step.operation.card : step.operation.patch;
+      return !!target && Object.keys(values).every(key => equal(target[key], values[key]));
+    }
+    function mergeAutosaveAck(local, snapshot, book, step) {
+      if (!local || local.book.id !== snapshot.book.id || book?.id !== snapshot.book.id ||
+          book.revision !== snapshot.book.revision + 1 || local.book.revision !== snapshot.book.revision || !autosaveOperationApplied(book, snapshot, step)) return null;
+      const next = mergeWorkspace(local, book);
+      if (step.kind === 'chapter' || step.kind === 'settings') {
+        const group = step.kind === 'chapter' ? 'chapter' : 'settings', base = group === 'chapter' ? 'baseChapter' : 'baseSettings';
+        const server = group === 'chapter' ? chapterFields(book.chapters.find(c => c.id === snapshot.chapterId)) : bookFields(book);
+        if (!server || group === 'chapter' && local.chapterId !== snapshot.chapterId) return null;
+        const fields = { ...server };
+        for (const key of Object.keys(local[group])) {
+          // Compare with SENT draft, not the old baseline: undo-to-original during HTTP is new intent too.
+          if (!equal(local[group][key], snapshot[group][key]) ||
+              !Object.hasOwn(step.operation.patch, key) && !equal(local[group][key], local[base][key])) fields[key] = local[group][key];
+        }
+        next[group] = group === 'settings' ? { ...fields, writingConstraints: copyWritingConstraints(fields.writingConstraints) } : fields;
+        next[base] = server;
+      } else if (step.kind === 'card') {
+        const sentId = snapshot.card.id;
+        const saved = book.cards.find(c => c.id === step.operation.card.id);
+        if (!saved) return null;
+        const sameEditor = sentId ? local.card?.id === sentId : local.card && !local.card.id && local.baseCard === snapshot.baseCard;
+        if (sameEditor) {
+          const server = cardFields(saved), fields = { ...server };
+          for (const key of Object.keys(local.card)) if (key !== 'id' && !equal(local.card[key], snapshot.card[key])) fields[key] = local.card[key];
+          next.card = fields; next.baseCard = server;
+        }
+      }
+      if (local.constraintsEditor) {
+        next.constraintsEditor = { ...local.constraintsEditor };
+        if (step.kind === 'settings' && Object.hasOwn(step.operation.patch, 'writingConstraints'))
+          next.constraintsEditor.baseText = snapshot.constraintsEditor?.parsedText ?? serializeConstraintsMarkdown(snapshot.settings.writingConstraints);
+      }
+      return next;
+    }
+    function autosaveRecoveryWorkspace(w, pending) {
+      if (!w || !pending || pending.snapshot.book.id !== w.book.id || pending.snapshot.book.revision !== w.book.revision) return w;
+      const { snapshot, step } = pending;
+      if ((step.kind === 'chapter' && w.chapterId !== snapshot.chapterId) || step.kind === 'card' &&
+          !(snapshot.card.id ? w.card?.id === snapshot.card.id : w.card && !w.card.id && w.baseCard === snapshot.baseCard)) return w;
+      const group = step.kind === 'chapter' ? 'chapter' : step.kind === 'settings' ? 'settings' : 'card';
+      const base = group === 'chapter' ? 'baseChapter' : group === 'settings' ? 'baseSettings' : 'baseCard';
+      const projected = { ...w[base] }, keys = step.kind === 'card' ? Object.keys(snapshot.card) : Object.keys(step.operation.patch);
+      for (const key of keys) if (!equal(w[group][key], snapshot[group][key])) projected[key] = snapshot[group][key];
+      const next = { ...w, [base]: projected };
+      if (group === 'settings' && w.constraintsEditor && !equal(projected.writingConstraints, w[base].writingConstraints))
+        next.constraintsEditor = { ...w.constraintsEditor, baseText: snapshot.constraintsEditor?.parsedText ?? serializeConstraintsMarkdown(snapshot.settings.writingConstraints) };
+      return next;
+    }
+    function autosaveRecoveryPayload(w, state = {}) {
+      const data = recoveryPayload(autosaveRecoveryWorkspace(w, state.pendingSnapshot));
+      const p = state.pendingCard;
+      if (p && p.bookId === w.book.id && data.dirty.card && !w.card.id && state.pendingCardScope === w.baseCard) {
+        data.pendingCard = { ...p, card: { ...p.card, tags: p.card.tags.slice() } };
+      }
+      return data;
+    }
+    function validAutosaveRecovery(value, bookId) {
+      if (!validRecovery(value, bookId)) return false;
+      const ownRecord = (object, keys) => !!object && typeof object === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(object)) &&
+        Reflect.ownKeys(object).length === keys.length && keys.every(key => {
+          const d = Object.getOwnPropertyDescriptor(object, key); return d && d.enumerable && Object.hasOwn(d, 'value');
+        });
+      const descriptor = Object.getOwnPropertyDescriptor(value, 'pendingCard');
+      if (!descriptor) return !('pendingCard' in value);
+      if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) return false;
+      const p = descriptor.value, keys = ['id', 'kind', 'title', 'content', 'status', 'pinned', 'fromChapter', 'toChapter', 'tags'];
+      if (!ownRecord(p, ['bookId', 'id', 'baseRevision', 'card']) || p.bookId !== bookId ||
+          !Number.isSafeInteger(p.baseRevision) || p.baseRevision < 1 || typeof p.id !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(p.id) ||
+          !ownRecord(p.card, keys) || p.card.id !== p.id || !value.dirty.card || value.card.id !== undefined ||
+          !Number.isSafeInteger(p.card.fromChapter) || p.card.fromChapter < 1 ||
+          !(p.card.toChapter === null || Number.isSafeInteger(p.card.toChapter) && p.card.toChapter >= p.card.fromChapter) ||
+          !Array.isArray(p.card.tags) || Object.getPrototypeOf(p.card.tags) !== Array.prototype || p.card.tags.length > 50 ||
+          Reflect.ownKeys(p.card.tags).length !== p.card.tags.length + 1) return false;
+      for (let i = 0; i < p.card.tags.length; i++) {
+        const d = Object.getOwnPropertyDescriptor(p.card.tags, String(i));
+        if (!d || !d.enumerable || !Object.hasOwn(d, 'value') || typeof d.value !== 'string' ||
+            d.value.length > 100 || !d.value.trim() || /[\uD800-\uDFFF]/u.test(d.value)) return false;
+      }
+      return !!autosaveStep({ chapter: null, settings: {}, baseSettings: {}, card: cardFields(p.card), baseCard: null });
+    }
+    function restoredAutosaveWorkspace(active, value) {
+      const next = restoredWorkspace(active, value), pending = value.pendingCard;
+      const saved = pending && active.book.cards.find(card => card.id === pending.id);
+      if (saved && next.card && !next.card.id) {
+        const sent = cardFields(pending.card), desired = { ...next.card, id: pending.id };
+        if (Object.keys(sent).every(key => equal(desired[key], sent[key]))) { next.card = cardFields(saved); next.baseCard = cardFields(saved); }
+        else { next.card = desired; next.baseCard = sent; }
+      }
+      return next;
+    }
+    const autosaveCanSave = (w, state = {}) => !!w && (state.running || state.failed || isDirty(autosaveRecoveryWorkspace(w, state.pendingSnapshot)));
+    function createAutosaveController({ getWorkspace, getEpoch, isPaused, send, apply, fail, settled = () => {}, started = () => {},
+      setTimer = setTimeout, clearTimer = clearTimeout, delay = 1000, newId = () => globalThis.crypto.randomUUID() }) {
+      let timer = null, pending = null, pendingSnapshot = null, pendingCard = null, cardScope = null;
+      let due = false, halted = false, disposed = false, generation = 0;
+      const clear = () => { if (timer !== null) clearTimer(timer); timer = null; };
+      const run = (manual = false) => {
+        if (pending) return pending;
+        if (disposed || halted || !due || isPaused(manual)) return Promise.resolve(false);
+        const work = async () => {
+          while (due && !disposed && !halted && !isPaused(manual)) {
+            const snapshot = getWorkspace();
+            let step = autosaveStep(snapshot);
+            if (!step) {
+              // Pure formatting has no Host representation. Acknowledge it only
+              // once this lane is idle and canonical rows already match baseline.
+              if (constraintsEditorDirty(snapshot) && !snapshot.constraintsEditor.error &&
+                  equal(snapshot.settings.writingConstraints, snapshot.baseSettings.writingConstraints))
+                apply({ ...snapshot, constraintsEditor: { ...snapshot.constraintsEditor, baseText: snapshot.constraintsEditor.text } }, snapshot.book, null);
+              due = false; break;
+            }
+            const epoch = getEpoch(), token = generation;
+            try {
+              if (step.kind === 'card' && !snapshot.card.id) {
+                if (!pendingCard || pendingCard.bookId !== snapshot.book.id || cardScope !== snapshot.baseCard) {
+                  const id = newId();
+                  if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new Error('constraintsCrypto');
+                  pendingCard = { bookId: snapshot.book.id, id, baseRevision: snapshot.book.revision, card: { ...step.operation.card, id } };
+                  cardScope = snapshot.baseCard;
+                }
+                step = { kind: 'card', operation: { action: 'createCard', card: { ...step.operation.card, id: pendingCard.id } } };
+                pendingCard = { ...pendingCard, card: step.operation.card, baseRevision: snapshot.book.revision };
+              }
+              pendingSnapshot = { snapshot, step }; started(pendingSnapshot);
+              const book = await send({ bookId: snapshot.book.id, expectedRevision: snapshot.book.revision, operation: step.operation });
+              if (disposed || token !== generation || getEpoch() !== epoch || getWorkspace()?.book.id !== snapshot.book.id) break;
+              const next = mergeAutosaveAck(getWorkspace(), snapshot, book, step);
+              if (!next) throw Object.assign(new Error('autosaveReceipt'), { code: 'CONFLICT' });
+              pendingSnapshot = null;
+              if (step.operation.action === 'createCard') { pendingCard = null; cardScope = null; }
+              apply(next, book, step);
+            } catch (error) {
+              if (!disposed && token === generation && getEpoch() === epoch && getWorkspace()?.book.id === snapshot.book.id) {
+                halted = true; due = false; clear(); fail(error, snapshot);
+              }
+              break;
+            }
+          }
+          return !halted;
+        };
+        pending = work().finally(() => { pending = null; settled(); });
+        return pending;
+      };
+      return {
+        schedule() { if (disposed || halted) return; clear(); due = false; timer = setTimer(() => { timer = null; due = true; void run(); }, delay); },
+        flush({ retry = false, manual = false } = {}) { if (retry) halted = false; clear(); due = true; return run(manual); },
+        wait() { return pending || Promise.resolve(true); },
+        cancel() { clear(); due = false; generation++; pendingSnapshot = null; pendingCard = null; cardScope = null; },
+        resetFailure() { halted = false; if (!pending) pendingSnapshot = null; },
+        restorePendingCard(value, scope) { pendingCard = value; cardScope = scope; },
+        dispose() { disposed = true; clear(); due = false; generation++; },
+        activate() { disposed = false; },
+        get running() { return pending !== null; }, get failed() { return halted; },
+        get pendingSnapshot() { return pendingSnapshot; }, get pendingCard() { return pendingCard; }, get pendingCardScope() { return cardScope; },
+      };
+    }
+    const constraintsPreviewReady = (value, bookId) => !!value && value?.book?.id === bookId && !value?.constraintsEditor?.error;
     // Native textarea values normalize CRLF and CR to LF. Keep the saved body
     // unchanged outside the edit (except a CR/LF splice boundary, see below),
     // and map selections to the original UTF-16 string for exact host checks.
@@ -488,9 +1441,25 @@ window.__ModuleLoader__.load({
     const modelDescription = value => value?.provider && value?.model ? value.provider + ' / ' + value.model + (value.reasoningEffort ? ' · ' + value.reasoningEffort : '') : '';
 
     const en = {
-      writingControls: 'Writing controls', collapseControls: 'Collapse controls', expandControls: 'Show controls',
-      chaptersToggle: 'Chapters', bookTools: 'Book / chapter tools and export', previousResult: 'Showing an earlier saved result, not output from this attempt.', results: 'Generated results', advanced: 'Model / context / details', insertionContext: 'Original context (insert here; no source text replaced)', insertionSpot: '│ insertion point │', sourceAnchor: 'Original context · append at end', legacyDraft: 'Recovered result edits — resolve explicitly before generation/review', discardResultEdits: 'Discard result edits', newTextLabel: 'New text (not saved)', approveAll: 'Approve all', approveAllHint: 'Approve every pending change in this visible result; previously rejected changes stay original.', summarySaved: 'Current saved summary (not the original generation snapshot)', summaryOnly: 'Summary only — manuscript is unchanged', noSummary: 'No saved summary',
-      nav: 'Inspiration', title: 'Inspiration', subtitle: 'AI drafts. You decide what stays.',
+      autosaveHint: 'Manual edits save automatically about 1 second after typing stops. Incomplete fields stay local; AI proposals and model preferences still require explicit action.', autosaveShort: 'Autosave · manual edits', saveNow: 'Save now', autosaveRetry: 'Retry saving', autosavePaused: 'Autosave is paused. Your local edits are kept. Use Retry saving to check the saved version before continuing.', autosaveReceipt: 'The save response did not match the requested edit. Your local edits are kept; review the saved version before retrying.', autosaveIncomplete: 'Some manual fields are incomplete or invalid and remain local. Complete them before saving or continuing.',
+      constraints: 'Writing constraints', constraintsHint: 'Book-wide reference conditions for every model call: environment, dialogue, expression or any custom novel element. Examples below are placeholders only.',
+      constraintsTextEditor: 'Markdown editor', constraintsShowSource: 'Show Markdown syntax', constraintsHideSource: 'Hide Markdown syntax', constraintsWriteRules: 'Writing rules', constraintsAddRule: 'Add rule', constraintsCurrentActions: 'Current rule actions', constraintsPlaceCaret: 'Place the caret in a rule to manage it',
+      constraintsContinuousHint: 'Type directly in the document. Markdown formatting stays in place; move the caret into the text to edit its syntax. Tab indents and Shift+Tab outdents. Press Escape then Tab to leave the editor.',
+      constraintsLiteralHint: 'Showing all syntax in the same editor. Turn this off to format the document in place. Press Escape then Tab to leave the editor.',
+      constraintsDraftHint: 'Use a top-level bullet for a category, then four spaces and a bullet for each rule. You can also use # or ## category headings with a rule list. [x] means enabled and [ ] means disabled. Press Enter at the end of a category to start an indented - [x] - rule. Enter on an existing - [x] - or - [ ] - rule starts a new enabled rule at the same indent. A starter with no text is not saved. Shift+Enter inside a rule adds a continuation line. Valid changes autosave after typing stops. Incomplete Markdown stays in local recovery and blocks generation. To remove the last rule, use the confirmed Delete action.',
+      constraintsHelp: 'Markdown format and saving behavior',
+      constraintsGuideExample: '- Setting\n    - [x] Write from the viewpoint character’s senses.\n    - [ ] - Describe the weather in every scene.',
+      constraintsRuleStarter: 'Type text for the new rule before it can be saved.',
+      constraintsGuideInnerList: 'A rule with no checkbox is enabled by default. The first bullet on the indented line starts a rule. A second hyphen after the checkbox is an optional bullet in the rule text, not a separate rule or switch.',
+      constraintsMarkdownTooLong: 'The Markdown document exceeds the local recovery limit of 2000000 UTF-16 units. This input was not applied or truncated; reduce or split the pasted text.',
+      constraintsMarkdownInvalid: 'Incomplete or invalid constraints Markdown. Use a category and at least one nonempty child rule (category ≤80, rule ≤4000 UTF-16 units; at most 64 rules). Your exact source remains in local recovery; constraints are not being saved.', constraintsMarkdownEmpty: 'The document is empty but saved or draft rules still exist. Undo the clearing or restore at least one valid rule, then use the confirmed delete buttons to remove rules.', constraintsPlaceholder: '- Environment\n    - Describe what the viewpoint character would notice before broader scenery.', constraintsDeleteTitle: 'Delete this writing constraint?', constraintsDeleteHint: 'Only this rule will be removed. It will no longer apply to new tasks after saving.', constraintsAddCategory: 'Add category', newConstraintCategory: 'New category', newConstraint: 'New writing constraint',
+      constraintsModelHint: 'Enabled rules are injected in full within the fixed hard context budget; disabled rules are not applied. Oversized context is rejected, not silently trimmed. Each task keeps its starting snapshot; saved changes affect the next task. The model is not guaranteed to comply semantically. Preview context to inspect the report and prompt.',
+      constraintsCount: '{total} / 64 rules · {enabled} enabled · {disabled} disabled', constraintsEmpty: 'No writing constraints. Add only conditions you want this book to use.', constraintsAdd: 'Add constraint', constraintsCategory: 'Category (custom text allowed)', constraintsContent: 'Condition', constraintsEnabled: 'Enabled', constraintsRemove: 'Delete constraint', constraintsRemoveNamed: 'Delete rule {position}: “{rule}”', constraintsUp: 'Move up', constraintsDown: 'Move down', constraintsCategoryPlaceholder: 'Environment, dialogue, expression, or your own category', constraintsContentPlaceholder: 'Example only: describe the environment through the viewpoint character’s senses.', constraintsCategories: 'Environment|Dialogue|Expression|Action|Psychology|Appearance|Plot|Pacing|Viewpoint|Style',
+      constraintsLimit: 'A book can have at most 64 writing constraints.', constraintsCrypto: 'Secure UUID generation is unavailable. Use a browser with crypto.randomUUID; no constraint was added.', constraintsInvalid: 'Each writing constraint needs a category (1–80 UTF-16 units), condition (1–4000 UTF-16 units), unique UUID and enabled flag. Complete or delete blank rows before saving; disabled rows also need valid text.',
+      writingControls: 'Writing toolbar', collapseControls: 'Focus writing', expandControls: 'Show toolbar',
+      chaptersToggle: 'Chapter list', editChapterTitle: 'Edit title', closeTitleEditor: 'Close title editor', workspaceTools: 'Book tools', bookTools: 'Book / chapter tools and export', previousResult: 'Showing an earlier saved result, not output from this attempt.', results: 'Generated results', advanced: 'Model / context / details', insertionContext: 'Original context (insert here; no source text replaced)', insertionSpot: '│ insertion point │', sourceAnchor: 'Original context · append at end', legacyDraft: 'Recovered result edits — resolve explicitly before generation/review', discardResultEdits: 'Discard result edits', newTextLabel: 'New text (not saved)', approveAll: 'Approve all', approveAllHint: 'Approve every pending change in this visible result; previously rejected changes stay original.', summarySaved: 'Current saved summary (not the original generation snapshot)', summaryOnly: 'Summary only — manuscript is unchanged', noSummary: 'No saved summary',
+      workspacePages: 'Book and generation pages', contextPageHint: 'Preview the latest saved reference for the current chapter and writing task. This does not call a model.', contextStageOne: 'Whole-chapter rewriting: this shows the first request (analysis). The second request also contains the model’s analysis, which is not available yet.', refreshPreview: 'Refresh preview', generatedContext: 'Context used to generate this result', openBackupTools: 'Open book tools to export a backup', operationDetails: 'Generation details', noGenerationDetails: 'No generated result or task to show for this selection.',
+      nav: 'Inspiration', pages: 'Workspace pages', savedTabsDirty: '{page} · unsaved changes',
       polishAI: 'AI polish', polishCustom: 'Polish to requirements', polishSelectionActions: 'Selected passage actions', polishSelectionOnly: 'This selection only. Selecting text does not start an AI request. Tab enters these actions; Escape closes them.',
       polishDefaultDirection: 'Polish this selected passage for clarity, flow and natural expression. Preserve its meaning, point of view, characters, facts and plot; return only the polished passage.',
       polishRequirement: 'Enter a non-empty requirement for this selected passage.', polishSubmit: 'Polish this selection', polishComposing: 'Finish composing text before asking AI to polish.', polishBusy: 'A generation is running or settling for this book. Wait or cancel it before starting another.',
@@ -502,11 +1471,11 @@ window.__ModuleLoader__.load({
       modelApply: 'Apply to Inspiration', modelReload: 'Reload saved model preference', modelRetryCatalog: 'Retry model catalog', modelSaved: 'Model preference saved', modelDraft: 'Model preference draft — not applied', modelScope: 'Plugin-wide preference for Inspiration only. Does not change the DSH default or your manuscript.', modelNextGeneration: 'Applies to the next generation. A running job keeps its original model.', modelFollowObserved: 'Last observed DSH default: {model}. Resolved again when generation starts.', modelEffective: 'Effective saved custom model: {model}', modelJob: 'This job’s actual model: {model}', modelJobPending: 'This job’s actual model will appear when its server snapshot is loaded.',
       modelFeatureUnavailable: 'Model selection is unavailable in the current backend. Reload the plugin/backend, then reload the saved model preference. Generation is blocked until the contract is available.', modelLoading: 'Loading model catalog…', modelSaving: 'Applying model preference…', modelUnsaved: 'Apply or explicitly reload your model choices before generating.', modelSettingsConflict: 'The saved model preference changed elsewhere. Your choices are kept. Reload the saved model preference explicitly before trying again.', modelChooseRoute: 'Choose a provider and model before applying.', modelRouteUnavailable: 'This selected route is unavailable. It has not been replaced. Choose another active route or follow the DSH default, then Apply.', modelEffortUnavailable: 'The selected reasoning effort is no longer advertised. Choose an advertised effort or Provider default, then Apply.', modelCatalogError: 'Could not load the model catalog. Your choices are kept; retry the catalog.', modelUnavailableOption: 'Unavailable: {id}',
       manageBooks: 'Book management', manageBookHint: 'Rename or permanently delete the selected book.', savedBookTitle: 'Exact saved title', bookIdentity: 'Book ID: {id} · revision {revision}', bookOption: '{title} · {count} chapters · {id}',
-      renameBook: 'Rename book', renameTitle: 'New book title', renamed: 'Book renamed.', manageUnsaved: 'Resolve all unsaved edits and saved-version conflicts before managing this book.', manageRecovery: 'Restore and save, or explicitly discard the local recovery copy before managing this book.',
+      renameBook: 'Rename book', renameTitle: 'New book title', renamed: 'Book renamed.', manageUnsaved: 'Resolve all unsaved edits and saved-version conflicts before managing this book.', manageStale: 'The book has changed since this page was opened. Refresh the saved version to review it again.', manageRecovery: 'Restore and save, or explicitly discard the local recovery copy before managing this book.',
       deleteBook: 'Permanently delete book', deleteWarning: 'This cannot be undone. Permanently deletes this book, every chapter, canon card, proposal, revision history and this plugin’s job records. DSH model-session logs are stored separately and are not deleted.',
       deleteBackup: 'Export a JSON backup before deleting. The backup includes saved data only; keep it somewhere safe.', deleteTypeTitle: 'Type the exact saved title to confirm', deleteBusy: 'Deletion is blocked while this book has a running or unsettled generation. Wait for it to finish, or cancel it and wait for cancellation to settle.',
       deleteUnconfirmed: 'The server did not return a matching deletion confirmation. Local data has been kept. Close this dialog and refresh the library before trying again.',
-      deleteUncertain: 'The deletion result could not be confirmed. Local data has been kept; the server may already have deleted the book. Close this dialog and refresh the library to check. Do not retry blindly.',
+      deleteUncertain: 'The deletion result could not be confirmed. Local data has been kept; the server may already have deleted the book. Refresh the saved version to check. Do not retry blindly.',
       deleted: '“{title}” was deleted from the library and its plugin records were removed. DSH model-session logs are retained separately.',
       deleteCleanupPending: '“{title}” is hidden from the library, but residual plugin data cleanup is still pending. Cleanup will retry on the next plugin load. Do not assume all data has been erased. DSH model-session logs are retained separately.',
       libraryCleanupPending: '{count} deleted book(s) still have residual plugin data awaiting cleanup. Cleanup retries on the next plugin load; DSH model-session logs are retained separately.',
@@ -522,15 +1491,13 @@ window.__ModuleLoader__.load({
       chapterOutline: 'Chapter plan (not yet occurred)', manuscript: 'Manuscript', editorHint: 'Write here, or select an exact passage for polishing. Save before asking AI.',
       draft: 'Draft', final: 'Final', chapterStatus: 'Chapter status', chars: '{count} characters', revision: 'Revision {number}',
       selected: '{count} characters selected · offsets {start}–{end}', noSelection: 'Select text in the manuscript for precise polishing.',
-      summary: 'Chapter summary', summaryCurrent: 'Summary matches this revision', summaryStale: 'Summary missing or stale — excluded from future context',
-      summaryHint: 'A summary-only save confirms the current revision. If title, plan or body also changes, the summary remains stale: review and confirm it below. AI summaries also require acceptance.',
-      confirmSummary: 'Confirm reviewed summary for this revision', confirmSummaryHint: 'Confirm that this summary describes the currently saved chapter accurately. The manuscript will not change.',
+      summary: 'Chapter summary',
       maintenance: 'Archive maintenance', prune: 'Clear processed proposals and old history', pruneTitle: 'Permanently clear old archive entries?', pruneHint: 'Export a JSON backup first. Accepted/rejected proposals will be deleted and each chapter will retain only its 5 most recent history snapshots. Ready proposals and current manuscript are kept. This cannot be undone.',
       ai: 'Writing partner', aiSafety: 'AI output is a proposal, never an automatic replacement.', mode: 'Task',
-      modeDraft: 'Draft a chapter', modeContinue: 'Continue the chapter', modePolish: 'Polish selected text', modeSummary: 'Summarize this chapter', modeRevise: 'Polish to requirements (whole chapter)',
-      reviseHint: 'Whole current chapter only — not the selected passage or the whole book. No selection needed. Starts two sequential, potentially paid model calls: analysis, then targeted whole-chapter polishing. Preserve cast, canon and plot unless you explicitly request a change.',
-      reviseRequirement: 'Enter a specific whole-chapter polish requirement before starting.', revisePlaceholder: 'For example: dialogue feels stiff and sparse — make it natural and add dialogue without changing the plot or character relationships.',
-      analyzing: 'Analyzing your requirements… (step 1 of 2)', optimizing: 'Polishing this whole chapter… (step 2 of 2)', revisionAnalysis: 'Analysis and whole-chapter polish plan',
+      modeDraft: 'Draft a chapter', modeContinue: 'Continue the chapter', modePolish: 'Polish selected text', modeSummary: 'Summarize this chapter', modeRevise: 'Rewrite this chapter to requirements',
+      reviseHint: 'Rewrites only the current chapter, not the selected passage or the whole book. No selection needed. Starts two sequential, potentially paid model calls: analysis, then targeted rewriting. Preserve cast, canon and plot unless you explicitly request a change.',
+      reviseRequirement: 'Enter a specific rewrite requirement before starting.', revisePlaceholder: 'For example: dialogue feels stiff and sparse — make it natural and add dialogue without changing the plot or character relationships.',
+      analyzing: 'Analyzing your requirements… (step 1 of 2)', optimizing: 'Rewriting this chapter… (step 2 of 2)', revisionAnalysis: 'Analysis and rewrite plan',
       revisionPreview: 'Whole-chapter polish preview — unconfirmed changes have NOT been saved to the manuscript', revisionOpen: 'Open whole-chapter polish preview over editor', revisionOriginal: 'Show saved manuscript / edit', revisionOriginalHint: 'Ordinary manuscript editor. Pending changes are not saved; editing the source will invalidate this review after saving. Already accepted changes stay saved.',
       revisionDeferred: 'Whole-chapter polish is ready. Your manual edits remain visible; resolve unsaved edits, recovery and conflicts before opening the preview. Save all saves only manual edits — AI changes still need explicit confirmation — individually or with Approve all.', revisionLocalDraft: 'Showing your unsaved manual draft, not the AI preview. Save all saves these manual edits only; AI changes need explicit confirmation — individually or with Approve all. Saving source edits will invalidate the old proposal.', revisionHunk: 'Change {number} · {state}', revisionAcceptLabel: 'Accept and save change {number}', revisionRejectLabel: 'Reject change {number}',
       revisionCounts: '{pending} pending · {accepted} accepted and saved · {rejected} rejected', revisionAccept: 'Accept and save this change', revisionReject: 'Reject this change', revisionDeleted: '(deletion — no replacement text)', revisionBefore: 'Compare original text', revisionNoChanges: 'Analysis completed: no text changes were proposed. There is nothing to accept.',
@@ -539,7 +1506,7 @@ window.__ModuleLoader__.load({
       instruction: 'Your direction', instructionPlaceholder: 'What should happen, and what must stay unchanged?',
       generate: 'Generate', context: 'Preview context', contextTitle: 'Context report', contextNote: 'Approximate character budget, not a token count. Future chapter facts are excluded.',
       budgetUsed: '{used} / {budget} characters', included: 'Included', omitted: 'Omitted', warnings: 'Warnings', fullPrompt: 'Full prompt (reference data)',
-      saveFirst: 'Save or discard your changes before generating or accepting a proposal.', polishFirst: 'Select a non-empty passage in the saved manuscript first.',
+      saveFirst: 'Save or discard your changes before generating or accepting a proposal.',
       generating: 'Generating… You may keep editing; the proposal remains tied to its source revision.', cancelJob: 'Cancel generation',
       running: 'Running', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', job: 'Generation', liveOutput: 'Output in progress (not a proposal yet)',
       pollError: 'Could not check this job. Retrying; the generation has not been cancelled.', jobOtherChapter: 'This job belongs to another chapter in this book.',
@@ -562,7 +1529,7 @@ window.__ModuleLoader__.load({
       noCards: 'No canon cards yet. Add characters, rules, timelines or unresolved threads.', chooseCard: 'Choose a card to edit, or create one.', invalidScope: 'Chapter scope must use positive whole numbers, with the end at or after the start.',
       noHistory: 'No previous manuscript versions yet. Body changes create snapshots automatically.', historyHint: 'Up to 30 previous bodies are retained. Restoring creates a new revision; it never silently accepts an AI proposal.',
       restore: 'Restore this body', restoreTitle: 'Restore a previous body?', restoreHint: 'The current body will be saved to history before this snapshot becomes the manuscript.',
-      unsavedTitle: 'Keep your changes?', unsavedHint: 'There are unsaved edits. Save them before continuing, or explicitly discard them.', saveContinue: 'Save and continue', discardContinue: 'Discard and continue', stay: 'Stay here',
+      unsavedTitle: 'Keep your changes?', unsavedHint: 'Some edits are still unsaved. Save them or discard only this unsaved tail. Content already autosaved will NOT be rolled back.', saveContinue: 'Save and continue', discardContinue: 'Discard and continue', stay: 'Stay here',
       recoveryTitle: 'A local recovery draft is available', recoveryHint: 'It has not replaced the saved book. Review and restore it only if you want to continue those edits.',
       recover: 'Restore local edits', discardRecovery: 'Discard recovery copy', recoveryPreview: 'Review recovery copy', recoveryMissing: 'This recovery refers to a missing chapter or proposal. Download it before discarding.',
       recoveryRestored: 'Local edits restored into the editor — not saved to the server.', storageWarning: 'Local recovery could not be stored. Keep this panel open and save or download your edits before leaving.',
@@ -574,16 +1541,32 @@ window.__ModuleLoader__.load({
       exportJson: 'Export backup JSON', exportMarkdown: 'Export manuscript', exportHint: 'Exports contain saved data only. JSON includes canon, proposals and history; Markdown contains the manuscript.',
       import: 'Import backup JSON', importHint: 'Imports create a separate book; they never overwrite an existing book.', importTooLarge: 'Choose a JSON file no larger than 40 MiB.',
       imported: 'Imported as a new book.', created: 'Book created.', model: 'Last observed Inspiration model', noModel: 'No effective model. Choose a custom model here or set a default in DSH to generate.',
-      requestFailed: 'Request failed', networkError: 'Connection failed. A save may have completed; refresh the saved version before retrying.',
+      requestFailed: 'Request failed', reviewCheckFailed: 'Review decision not submitted', networkError: 'Connection failed. A save may have completed; refresh the saved version before retrying.',
       generationFinished: 'Proposal ready for your review. Nothing has changed in the manuscript.',
-      localOnly: 'Local edits have not been saved to the server.', discard: 'Discard edits', confirmDiscard: 'Discard these unsaved edits?',
-      confirmChanged: 'The reviewed version changed while this dialog was open. Cancel, review the latest content, then confirm again.',
+      localOnly: 'Local edits have not been saved to the server.', discard: 'Discard unsaved edits', confirmDiscard: 'Discard only the unsaved edits?',
+      confirmChanged: 'The reviewed content is no longer current. Review the latest content, then confirm again.',
       dismiss: 'Dismiss', empty: '(empty)', selectionChanged: 'The selected source changed. Select the passage again.',
     };
     const zh = {
-      writingControls: '写作控制区', collapseControls: '收起控制区', expandControls: '展开控制区',
-      chaptersToggle: '章节列表', bookTools: '作品 / 章节工具与导出', previousResult: '当前显示的是此前已保存的结果，并非本次生成输出。', results: '生成结果', advanced: '模型 / 上下文 / 详情', insertionContext: '原文上下文（此处插入，未替换原文）', insertionSpot: '│ 此处插入 │', sourceAnchor: '原文上下文 · 从文末续写', legacyDraft: '已恢复旧版结果编辑，请明确处理后再生成或审阅', discardResultEdits: '放弃结果编辑', newTextLabel: '新文字（尚未保存）', approveAll: '一键批准', approveAllHint: '批准当前可见结果的所有待审阅修改；已拒绝的修改保持原文。', summarySaved: '当前已保存摘要（非生成时的原始摘要快照）', summaryOnly: '仅更新摘要，不改正文', noSummary: '尚无已保存摘要',
-      nav: '灵感', title: '灵感', subtitle: 'AI 起稿，落笔由你。',
+      autosaveHint: '手动编辑停笔约 1 秒后自动保存。不完整字段保留在本地；AI 提案及模型偏好仍需明确操作。', autosaveShort: '自动保存 · 手动稿', saveNow: '立即保存', autosaveRetry: '重试保存', autosavePaused: '自动保存已暂停，本地编辑仍保留。请点「重试保存」核对已保存版本后继续。', autosaveReceipt: '保存回执与本次编辑不匹配，本地编辑仍保留。请核对已保存版本后重试。', autosaveIncomplete: '部分手动字段尚未完整或有效，仍保留在本地。请补全后再保存或继续。',
+      constraints: '写作约束', constraintsHint: '本书所有模型调用都会参考的条件：可管理环境、对话、神态、表达，以及任何自定义小说要素。下方示例仅为占位提示。',
+      constraintsTextEditor: 'Markdown 编辑器', constraintsShowSource: '显示 Markdown 语法', constraintsHideSource: '隐藏 Markdown 语法', constraintsWriteRules: '编写规则', constraintsAddRule: '添加规则', constraintsCurrentActions: '当前规则操作', constraintsPlaceCaret: '将光标放在规则内即可操作',
+      constraintsContinuousHint: '直接在文档中输入。Markdown 格式原地呈现，移动光标到文字中即可编辑语法。Tab 缩进，Shift+Tab 减少缩进；先按 Esc 再按 Tab 可离开编辑器。',
+      constraintsLiteralHint: '在同一个编辑器中显示全部语法。关闭后恢复原地排版；先按 Esc 再按 Tab 可离开编辑器。',
+      constraintsDraftHint: '用顶层列表项写类别，下方每条规则用四个空格和列表标记开始；也可用 # 或 ## 标题加规则列表。[x] 表示启用，[ ] 表示停用。在类别末尾按 Enter，插入缩进后的「- [x] - 」。在「- [x] -」或「- [ ] -」规则里按 Enter，以相同缩进开始一条默认启用的新规则。空前缀不保存；规则内 Shift+Enter 只增加续行。有效内容会自动保存，未完成的 Markdown 保留在本地并阻止生成。删除最后一条规则须用删除按钮确认。',
+      constraintsHelp: 'Markdown 格式与保存说明',
+      constraintsGuideExample: '- 环境\n    - [x] 优先写视角人物会注意到的事物。\n    - [ ] - 每段都交代天气。',
+      constraintsRuleStarter: '请补写新规则的正文；空条目暂不保存。',
+      constraintsGuideInnerList: '省略方括号时，规则默认启用。缩进行的第一个短横线用来开始一条规则；方括号后的第二个短横线是规则正文里的可选项目符号，不会单独启停。',
+      constraintsMarkdownTooLong: 'Markdown 原文超过本地恢复稿 2000000 个 UTF-16 单位的上限。此次输入未应用，也未截断；请缩短或拆分粘贴内容。',
+      constraintsMarkdownInvalid: 'Markdown 尚未完成或格式无效：每个类别下须有非空子规则；类别最多 80、规则最多 4000 个 UTF-16 单位，最多 64 条。原文已保留在本地恢复稿，约束暂不保存。', constraintsMarkdownEmpty: '文档已清空，但仍有已保存或草稿规则。请撤销清空或恢复至少一条有效规则，再用删除按钮逐条确认删除。', constraintsPlaceholder: '- 环境\n    - 随人物感知展开。优先写人物此刻会注意到的事物。', constraintsDeleteTitle: '删除这条写作约束？', constraintsDeleteHint: '仅删除这条规则；保存后，它将不再应用于新任务。', constraintsAddCategory: '添加类别', newConstraintCategory: '新类别', newConstraint: '新写作约束',
+      constraintsModelHint: '启用的约束在固定硬性上下文预算内完整注入，停用的约束不应用；超出预算会报错，不会静默截断。每个任务使用启动时快照，保存修改只影响下一次任务。模型不保证语义上完全遵守，请用「预览上下文」查看报告与提示词。',
+      constraintsCount: '{total} / 64 条 · 启用 {enabled} 条 · 停用 {disabled} 条', constraintsEmpty: '尚无写作约束。仅添加你希望本书使用的条件。', constraintsAdd: '添加约束', constraintsCategory: '类别（可自由输入）', constraintsContent: '约束内容', constraintsEnabled: '启用', constraintsRemove: '删除约束', constraintsRemoveNamed: '删除第 {position} 条“{rule}”', constraintsUp: '上移', constraintsDown: '下移', constraintsCategoryPlaceholder: '环境、对话、神态，或自定义类别', constraintsContentPlaceholder: '仅示例：通过视角人物的感官描写环境。', constraintsCategories: '环境|对话|神态|表达|动作|心理|外貌|情节|节奏|视角|文风',
+      constraintsLimit: '每本书最多 64 条写作约束。', constraintsCrypto: '当前浏览器无法安全生成 UUID，请使用支持 crypto.randomUUID 的浏览器；尚未添加约束。', constraintsInvalid: '每条约束需包含类别（1–80 个 UTF-16 单位）、内容（1–4000 个 UTF-16 单位）、唯一 UUID 和启用状态。请补全或删除空白行后保存；停用的约束也需有效文字。',
+      writingControls: '写作工具栏', collapseControls: '专注写作', expandControls: '显示工具栏',
+      chaptersToggle: '章节列表', editChapterTitle: '改标题', closeTitleEditor: '关闭标题编辑', workspaceTools: '作品工具', bookTools: '作品 / 章节工具与导出', previousResult: '当前显示的是此前已保存的结果，并非本次生成输出。', results: '生成结果', advanced: '模型 / 上下文 / 详情', insertionContext: '原文上下文（此处插入，未替换原文）', insertionSpot: '│ 此处插入 │', sourceAnchor: '原文上下文 · 从文末续写', legacyDraft: '已恢复旧版结果编辑，请明确处理后再生成或审阅', discardResultEdits: '放弃结果编辑', newTextLabel: '新文字（尚未保存）', approveAll: '一键批准', approveAllHint: '批准当前可见结果的所有待审阅修改；已拒绝的修改保持原文。', summarySaved: '当前已保存摘要（非生成时的原始摘要快照）', summaryOnly: '仅更新摘要，不改正文', noSummary: '尚无已保存摘要',
+      workspacePages: '作品与生成页面', contextPageHint: '预览当前章节和写作任务使用的最新已保存参考资料，不调用模型。', contextStageOne: '按需重写本章：这里显示第一阶段（分析需求）的提示词；第二阶段还会带上模型返回的分析，生成前无法预览。', refreshPreview: '刷新预览', generatedContext: '这条结果生成时使用的上下文', openBackupTools: '前往作品工具备份', operationDetails: '生成详情', noGenerationDetails: '当前选择下没有生成结果或任务详情。',
+      nav: '灵感', pages: '工作区页面', savedTabsDirty: '{page} · 有未保存的更改',
       polishAI: 'AI润色', polishCustom: '按需润色', polishSelectionActions: '选中文字的润色操作', polishSelectionOnly: '仅处理当前选区；选择文字不会发起 AI 请求。Tab 可进入操作，Escape 可关闭。',
       polishDefaultDirection: '请润色所选片段，让表达更清晰、流畅、自然。保留原意、叙述视角、人物、事实与情节，不擅自增删设定；只返回润色后的片段。',
       polishRequirement: '请填写针对当前选区的非空润色要求。', polishSubmit: '润色此选区', polishComposing: '请先结束输入法组字，再发起润色。', polishBusy: '本作品仍有生成中或尚未收尾的任务，请等待完成，或取消并等待收尾后再生成。',
@@ -595,11 +1578,11 @@ window.__ModuleLoader__.load({
       modelApply: '应用到灵感', modelReload: '重新载入已保存模型偏好', modelRetryCatalog: '重试模型目录', modelSaved: '模型偏好已保存', modelDraft: '模型偏好草稿 · 尚未应用', modelScope: '仅对灵感插件全局生效，不修改 DSH 默认模型，也不修改正文。', modelNextGeneration: '从下一次生成开始生效；正在运行的任务仍使用原模型。', modelFollowObserved: '最近读取的 DSH 默认模型：{model}（生成开始时重新读取）。', modelEffective: '已保存自选偏好的当前有效模型：{model}', modelJob: '本次任务实际模型：{model}', modelJobPending: '载入服务端任务快照后将显示本次任务的实际模型。',
       modelFeatureUnavailable: '当前后端尚不支持模型选择。请重新加载插件或后端，再重新载入已保存模型偏好。接口可用前暂不能生成。', modelLoading: '正在载入模型目录…', modelSaving: '正在应用模型偏好…', modelUnsaved: '生成前请先应用模型选择，或明确重新载入已保存偏好。', modelSettingsConflict: '已保存模型偏好在其他位置发生了变化，当前选择已保留。请明确重新载入已保存偏好后再操作。', modelChooseRoute: '应用前请选择提供方与模型。', modelRouteUnavailable: '当前所选模型路线不可用，未自动替换。请选择其他可用路线，或改为跟随 DSH 默认，再点击应用。', modelEffortUnavailable: '当前推理强度已不在模型公布的选项中，请选择有效强度或提供方默认，再点击应用。', modelCatalogError: '模型目录载入失败，当前选择已保留，请重试模型目录。', modelUnavailableOption: '不可用：{id}',
       manageBooks: '作品管理', manageBookHint: '重命名或永久删除当前所选作品。', savedBookTitle: '完整的已保存名称', bookIdentity: '作品编号：{id} · 修订 {revision}', bookOption: '{title} · {count} 章 · {id}',
-      renameBook: '重命名作品', renameTitle: '新的作品名称', renamed: '作品已重命名。', manageUnsaved: '请先明确处理全部未保存编辑和版本冲突，再管理作品。', manageRecovery: '请先恢复并保存本地恢复稿，或明确丢弃恢复稿，再管理作品。',
+      renameBook: '重命名作品', renameTitle: '新的作品名称', renamed: '作品已重命名。', manageUnsaved: '请先明确处理全部未保存编辑和版本冲突，再管理作品。', manageStale: '作品版本已变化，请刷新已保存版本后重新核对。', manageRecovery: '请先恢复并保存本地恢复稿，或明确丢弃恢复稿，再管理作品。',
       deleteBook: '永久删除作品', deleteWarning: '此操作不可撤销。将永久删除本作品及其全部章节、设定卡、提案、版本历史和本插件的任务记录。DSH 模型会话日志单独保留，不会随之删除。',
       deleteBackup: '删除前建议先导出 JSON 备份并妥善保存。备份仅包含已保存数据。', deleteTypeTitle: '请输入完整的已保存名称以确认', deleteBusy: '作品仍有生成中或尚未收尾的任务，暂不能删除。请等待完成，或取消任务并等待取消收尾。',
       deleteUnconfirmed: '服务端没有返回与当前作品匹配的删除确认。本地数据保持不变；请关闭此窗口并刷新作品列表后再检查。',
-      deleteUncertain: '暂时无法确认删除结果，本地数据保持不变；服务端可能已经删除作品。请关闭此窗口并刷新作品列表核实，不要直接重复删除。',
+      deleteUncertain: '暂时无法确认删除结果，本地数据保持不变；服务端可能已经删除作品。请刷新已保存版本核实，不要直接重复删除。',
       deleted: '《{title}》已从作品库删除，其插件数据已清理。DSH 模型会话日志仍单独保留。',
       deleteCleanupPending: '《{title}》已从作品库隐藏，但残留插件数据尚待清理；下次加载插件时会重试。不能视为所有数据均已擦除。DSH 模型会话日志仍单独保留。',
       libraryCleanupPending: '有 {count} 部已删除作品仍有残留插件数据待清理，下次加载插件时会重试。DSH 模型会话日志仍单独保留。',
@@ -615,15 +1598,13 @@ window.__ModuleLoader__.load({
       chapterOutline: '本章计划（尚未发生）', manuscript: '正文', editorHint: '直接写作，或精确选中一段文字进行润色。请先保存，再交给 AI。',
       draft: '草稿', final: '定稿', chapterStatus: '章节状态', chars: '{count} 字符', revision: '修订 {number}',
       selected: '已选 {count} 字符 · 位置 {start}–{end}', noSelection: '在正文中选中文字，即可精确润色。',
-      summary: '章节摘要', summaryCurrent: '摘要与当前修订一致', summaryStale: '摘要缺失或已过期，不会用于后续上下文',
-      summaryHint: '单独保存摘要会确认当前修订；若同时修改标题、提纲或正文，摘要仍会过期，请审阅后在下方明确确认。AI 摘要也须接受后才生效。',
-      confirmSummary: '确认已审阅摘要对应当前修订', confirmSummaryHint: '请确认摘要准确描述了当前已保存章节。此操作不会改变正文。',
+      summary: '章节摘要',
       maintenance: '档案维护', prune: '清理已处理候选及旧历史', pruneTitle: '永久清理旧档案？', pruneHint: '建议先导出 JSON 备份。将删除已接受、已拒绝的提案；各章历史仅保留最近 5 份。待审阅提案和当前正文保留。此操作不可撤销。',
       ai: '写作搭档', aiSafety: 'AI 输出只形成提案，不会自动替换正文。', mode: '写作任务',
-      modeDraft: '起草本章', modeContinue: '续写本章', modePolish: '精确润色选区', modeSummary: '提炼本章摘要', modeRevise: '按需润色（全文）',
-      reviseHint: '全文润色仅处理当前章节，不是当前选区，也不是全书，无需选中文字。将顺序发起两次可能计费的模型调用：先分析作者要求，再针对性润色全文；除非明确要求，保持人物、设定和情节不变。',
-      reviseRequirement: '请先填写具体的全文润色要求。', revisePlaceholder: '例如：对话太过生硬且偏少，请让对话更自然、增加有效对话，但保留情节与人物关系。',
-      analyzing: '正在分析作者要求…（第 1 / 2 步）', optimizing: '正在按需润色全文…（第 2 / 2 步）', revisionAnalysis: '分析与全文润色计划',
+      modeDraft: '起草本章', modeContinue: '续写本章', modePolish: '精确润色选区', modeSummary: '提炼本章摘要', modeRevise: '按需重写本章',
+      reviseHint: '只重写当前章节，不是当前选区，也不是全书，无需选中文字。将顺序发起两次可能计费的模型调用：先分析作者要求，再针对性重写；除非明确要求，保持人物、设定和情节不变。',
+      reviseRequirement: '请先填写具体的重写要求。', revisePlaceholder: '例如：对话太过生硬且偏少，请让对话更自然、增加有效对话，但保留情节与人物关系。',
+      analyzing: '正在分析作者要求…（第 1 / 2 步）', optimizing: '正在按需重写本章…（第 2 / 2 步）', revisionAnalysis: '分析与重写计划',
       revisionPreview: '全文润色预览，未确认改动尚未写入原稿', revisionOpen: '在主编辑器打开全文润色预览', revisionOriginal: '查看已保存正文 / 编辑', revisionOriginalHint: '当前为普通正文编辑器。待确认改动尚未保存；编辑并保存来源后，此审阅将过期。已采纳的修改仍保留在原稿中。',
       revisionDeferred: '全文润色已就绪，你的手动编辑保持显示。请先处理未保存编辑、恢复稿和冲突，再打开全文润色预览。「保存全部」只保存手动编辑，AI 改动仍须明确确认（逐处确认或一键批准）。', revisionLocalDraft: '当前显示你的未保存手动草稿，不是 AI 全文润色预览。「保存全部」只保存这些手动编辑，AI 改动仍须明确确认（逐处确认或一键批准）；保存来源编辑后，旧提案将过期。', revisionHunk: '第 {number} 处修改 · {state}', revisionAcceptLabel: '采纳并保存第 {number} 处修改', revisionRejectLabel: '拒绝第 {number} 处修改',
       revisionCounts: '待确认 {pending} 处 · 已采纳并保存 {accepted} 处 · 已拒绝 {rejected} 处', revisionAccept: '采纳并保存此处修改', revisionReject: '拒绝此处修改', revisionDeleted: '（删除此处，无替换文字）', revisionBefore: '对照原始文字', revisionNoChanges: '分析已完成：本次没有提出正文改动，无需采纳。',
@@ -632,7 +1613,7 @@ window.__ModuleLoader__.load({
       instruction: '要求', instructionPlaceholder: '这一段要发生什么？哪些内容必须保持不变？',
       generate: '生成', context: '预览上下文', contextTitle: '上下文报告', contextNote: '按字符粗略预算，不是 token 数。不会混入未来章节事实。',
       budgetUsed: '{used} / {budget} 字符', included: '已包含', omitted: '已省略', warnings: '提醒', fullPrompt: '完整提示词（参考资料）',
-      saveFirst: '请先保存或放弃当前更改，再生成或接受提案。', polishFirst: '请先在已保存的正文中选择非空片段。',
+      saveFirst: '请先保存或放弃当前更改，再生成或接受提案。',
       generating: '正在生成…你可以继续编辑；提案会始终绑定生成开始时的版本。', cancelJob: '取消生成',
       running: '生成中', completed: '已完成', failed: '失败', cancelled: '已取消', job: '生成任务', liveOutput: '生成中的输出（尚非提案）',
       pollError: '暂时无法查询任务，正在重试；生成任务并未取消。', jobOtherChapter: '此任务属于本作品的另一章节。',
@@ -655,7 +1636,7 @@ window.__ModuleLoader__.load({
       noCards: '还没有设定卡。可以记录人物、规则、时间线和未解伏笔。', chooseCard: '选择卡片进行编辑，或新建一张。', invalidScope: '章节范围须为正整数，结束章节不能早于起始章节。',
       noHistory: '暂无旧版正文。每次正文改变都会自动保留快照。', historyHint: '最多保留 30 份旧版正文。恢复会形成新修订，不会静默接受 AI 提案。',
       restore: '恢复此版正文', restoreTitle: '恢复一份旧版正文？', restoreHint: '当前正文会先存入历史，再用此快照替换。',
-      unsavedTitle: '保留当前更改？', unsavedHint: '还有未保存的修改。可以先保存再继续，或明确放弃这些修改。', saveContinue: '保存并继续', discardContinue: '放弃并继续', stay: '留在此处',
+      unsavedTitle: '保留当前更改？', unsavedHint: '仍有待保存修改。可先保存再继续，或仅放弃这些待保存更改；已自动保存的内容不会回滚。', saveContinue: '保存并继续', discardContinue: '放弃并继续', stay: '留在此处',
       recoveryTitle: '发现本地恢复稿', recoveryHint: '它尚未覆盖已保存作品。请先查看，再决定是否恢复这些编辑。',
       recover: '恢复本地编辑', discardRecovery: '丢弃恢复稿', recoveryPreview: '查看恢复稿', recoveryMissing: '恢复稿对应的章节或提案已不存在，请先下载保留后再丢弃。',
       recoveryRestored: '本地编辑已恢复到编辑器，尚未保存到服务端。', storageWarning: '无法存储本地恢复稿。离开前请保持此面板打开，保存或下载你的修改。',
@@ -667,44 +1648,88 @@ window.__ModuleLoader__.load({
       exportJson: '导出 JSON 备份', exportMarkdown: '导出正文', exportHint: '导出仅包含已保存数据。JSON 含设定、提案和历史；Markdown 仅含正文。',
       import: '导入 JSON 备份', importHint: '导入始终创建独立作品，不会覆盖已有作品。', importTooLarge: '请选择不超过 40 MiB 的 JSON 文件。',
       imported: '已作为新作品导入。', created: '作品已创建。', model: '最近读取的灵感模型', noModel: '当前没有有效模型。可在此单独选择模型，或在 DSH 中设置默认模型后再生成。',
-      requestFailed: '请求失败', networkError: '连接失败，保存可能已完成；重试前请刷新已保存版本。',
+      requestFailed: '请求失败', reviewCheckFailed: '未提交审阅决定', networkError: '连接失败，保存可能已完成；重试前请刷新已保存版本。',
       generationFinished: '提案已生成，等待你审阅；正文没有改变。',
-      localOnly: '本地编辑尚未保存到服务端。', discard: '放弃编辑', confirmDiscard: '放弃这些未保存修改？',
-      confirmChanged: '确认期间，已审阅的版本发生变化。请取消对话框，重新审阅最新内容后再确认。',
+      localOnly: '本地编辑尚未保存到服务端。', discard: '放弃待保存更改', confirmDiscard: '仅放弃这些待保存更改？',
+      confirmChanged: '当前建议或其对应的版本已变化。请查看最新内容，重新审阅后再确认。',
       dismiss: '收起', empty: '（空）', selectionChanged: '选区来源已变化，请重新选择片段。',
     };
 
+    function workspaceTabDirty(w) {
+      if (!w) return { settings: false, constraints: false };
+      const settings = w.settings || {}, baseSettings = w.baseSettings || {};
+      const settingsKeys = new Set([...Object.keys(settings), ...Object.keys(baseSettings)]);
+      settingsKeys.delete('writingConstraints');
+      return {
+        settings: [...settingsKeys].some(key => !equal(settings[key], baseSettings[key])),
+        constraints: constraintsEditorDirty(w) || !equal(settings.writingConstraints, baseSettings.writingConstraints),
+      };
+    }
+
+    const toolbarIcons = Object.freeze({
+      writing: 'M4 20h16M5 16l1-4L16 2l4 4-10 10-5 1zM14 4l4 4',
+      constraints: 'M8 4h12M8 12h12M8 20h12M4 4h.01M4 12h.01M4 20h.01',
+      cards: 'M6 7V4h14v13h-3M3 7h14v13H3zM6 11h8m-8 4h5',
+      settings: 'M4 6h16m-16 6h16m-16 6h16M8 4v4m8 2v4m-6 2v4',
+      history: 'M4 11a8 8 0 1 1 2 6M4 5v6h6m2-3v4l3 2',
+      tools: 'M3 6h7l2 2h9v12H3zM8 14h8',
+      manage: 'M4 4h12v16H4zM7 8h6M7 12h6M19 8v10m-2-2 2 2 2-2',
+      refresh: 'M20 10a8 8 0 0 0-13-5L4 8m0-5v5h5m-5 6a8 8 0 0 0 13 5l3-3m0 5v-5h-5',
+      title: 'M4 7V4h16v3M12 4v16m-4 0h8',
+      generate: 'M12 2l2.6 7.4L22 12l-7.4 2.6L12 22l-2.6-7.4L2 12l7.4-2.6L12 2z',
+      context: 'M2 12c3-4 6-6 10-6s7 2 10 6c-3 4-6 6-10 6s-7-2-10-6zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+      advanced: 'M5 3h14v18H5zM8 8h8m-8 4h8m-8 4h5',
+      focus: 'M8 4H4v4m12-4h4v4m0 8v4h-4M4 16v4h4',
+      expand: 'M4 5h16v14H4zM4 9h16m-8 3v4m-2-2h4',
+      approve: 'M4 12l4 4 8-8m-5 8 2 2 8-8',
+      cancel: 'M6 6h12v12H6z',
+      save: 'M4 4h13l3 3v13H4zM8 4v5h8V4m-8 16v-6h8v6',
+      discard: 'M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 10v6m4-6v6',
+      download: 'M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4',
+    });
+
     const CSS = `
-.mx-root{height:100%;min-height:0;min-width:0;overflow:auto;box-sizing:border-box;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;line-height:1.55;padding:22px;container-type:inline-size}
+.mx-root{--mx-ui-size:14px;--mx-field-size:13px;--mx-meta-size:12px;--mx-content-size:16px;--mx-section-size:17px;--mx-subhead-size:14px;display:flex;flex-direction:column;height:100%;min-height:0;min-width:0;overflow:hidden;box-sizing:border-box;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:var(--mx-ui-size);line-height:1.55;container-type:inline-size}
+.mx-content-pane{flex:1;min-height:0;min-width:0;overflow:auto;padding:8px clamp(10px,1.6vw,22px) 12px}.mx-content-pane> .mx-book-workspace{gap:6px}
 .mx-root *, .mx-root *::before, .mx-root *::after{box-sizing:border-box}
-.mx-root h1,.mx-root h2,.mx-root h3,.mx-root p{margin:0}.mx-root h1{font-size:24px;letter-spacing:.04em}.mx-root h2{font-size:17px}.mx-root h3{font-size:14px}
-.mx-header,.mx-row,.mx-actions,.mx-tabs{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.mx-header{justify-content:space-between;margin-bottom:20px;min-height:34px;padding-inline-start:var(--dsh-frame-leading-clearance,0px)}.mx-stack{display:flex;flex-direction:column;gap:14px;min-width:0}.mx-row-between{justify-content:space-between}.mx-grow{flex:1;min-width:150px}
+.mx-root h2,.mx-root h3,.mx-root p{margin:0}.mx-root h2{font-size:var(--mx-section-size)}.mx-root h3{font-size:var(--mx-subhead-size)}
+.mx-row,.mx-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.mx-stack{display:flex;flex-direction:column;gap:14px;min-width:0}.mx-row-between{justify-content:space-between}.mx-grow{flex:1;min-width:150px}
 .mx-root button,.mx-root input,.mx-root textarea,.mx-root select{font:inherit;color:var(--dsw-alias-label-primary)}
 .mx-root button{border:1px solid var(--dsw-alias-border-l1);border-radius:7px;background:var(--dsw-alias-bg-layer-1);padding:7px 12px;cursor:pointer;min-height:34px;line-height:1.35}.mx-root button:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l2)}
 .mx-root button:disabled{opacity:.5;cursor:not-allowed}.mx-root .mx-primary{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);font-weight:600}.mx-root .mx-danger{color:var(--dsw-alias-state-error-primary)}
 .mx-root :is(button,input,textarea,select,summary,a):focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}
 .mx-root input:not([type=checkbox]),.mx-root textarea,.mx-root select{width:100%;max-width:100%;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);border-radius:7px;padding:9px 10px;min-height:38px}.mx-root textarea{resize:vertical;line-height:1.7}.mx-root input[type=checkbox]{accent-color:var(--dsw-alias-brand-primary);width:16px;height:16px}
-.mx-book-row{align-items:flex-end}.mx-root .mx-book-row select,.mx-root .mx-book-row>button{height:40px;min-height:40px}.mx-book-row>button{flex-shrink:0;white-space:nowrap}
 .mx-model-row{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}.mx-model-row>.mx-field{flex:1 1 130px}.mx-root .mx-model-row select,.mx-root .mx-model-row>button{height:40px;min-height:40px}.mx-model-row>button{flex-shrink:0}.mx-model-picker{width:100%}
-.mx-field{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:13px}.mx-field>span:first-child{font-weight:550}.mx-hint{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
-.mx-panel{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:18px;min-width:0}.mx-subpanel{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:12px;min-width:0}.mx-empty{padding:40px 22px;max-width:760px;margin:0 auto}.mx-empty h2{font-size:22px}
-.mx-toolbar{padding:12px 0}.mx-tabs{border-bottom:1px solid var(--dsw-alias-border-l1);gap:4px;margin:8px 0 18px;padding-bottom:7px}.mx-root .mx-tabs button{border-color:transparent;background:transparent}.mx-root button[aria-pressed=true]{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}
-.mx-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;align-items:stretch;min-height:0}.mx-grid[data-chapters=true]{grid-template-columns:minmax(150px,230px) minmax(0,1fr)}.mx-writing-column{min-width:0;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px}.mx-chapter-nav{min-width:0;display:flex;flex-direction:column;gap:4px;overflow:auto;min-height:0}.mx-chapter-nav button{text-align:start;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mx-editor{min-height:0;font-size:16px!important;line-height:1.9!important;tab-size:2}.mx-writing-partner{position:static;flex:0 0 auto;max-height:40%;overflow:auto;min-width:0;background:var(--dsw-alias-bg-base);border-bottom:1px solid var(--dsw-alias-border-l2);padding:8px 0}.mx-partner-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 10px;align-items:start}.mx-partner-row>.mx-field{grid-column:1}.mx-partner-row>.mx-actions{grid-column:2;grid-row:1/3;align-self:end}.mx-partner-row textarea{resize:none;max-height:76px}.mx-partner-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px}.mx-partner-meta>button{font-size:12px;min-height:28px;padding:3px 7px}.mx-result-chooser{display:flex;align-items:center;gap:6px;max-width:350px}.mx-root .mx-result-chooser select{min-height:28px;padding:3px 6px;width:auto;max-width:270px;font-size:12px}.mx-partner-advanced{position:static;flex:0 0 auto;min-height:0;max-height:28%;overflow:auto;border-bottom:1px solid var(--dsw-alias-border-l1);padding:8px 0}.mx-legacy-recovery{border-inline-start:2px solid var(--dsw-alias-state-warn-primary);padding-inline-start:10px}
-.mx-status{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary)}.mx-status[data-tone=warn]{color:var(--dsw-alias-state-warn-primary)}.mx-status[data-tone=success]{color:var(--dsw-alias-state-success-primary)}
+.mx-field{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:var(--mx-field-size)}.mx-field>span:first-child{font-weight:550}.mx-hint{color:var(--dsw-alias-label-secondary);font-size:var(--mx-meta-size);line-height:1.6;overflow-wrap:anywhere}
+.mx-panel{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:18px;min-width:0}.mx-subpanel{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:12px;min-width:0}.mx-empty{padding:40px 22px;max-width:760px;margin:0 auto}
+.mx-toolbar{padding:12px 0}.mx-root button[aria-pressed=true]{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}
+.mx-grid{display:grid;grid-template-columns:minmax(0,1fr);align-items:stretch;min-height:0}.mx-writing-column{min-width:0;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px}.mx-editor{min-height:0;font-size:var(--mx-content-size);line-height:1.9!important;tab-size:2}.mx-writing-partner{position:static;flex:0 0 auto;max-height:42%;overflow:auto;min-width:0;background:var(--dsw-alias-bg-base);border-bottom:1px solid var(--dsw-alias-border-l1);padding:4px 3px 6px}.mx-partner-row{display:grid;grid-template-columns:minmax(9rem,.65fr) minmax(11rem,2fr);gap:5px 8px;align-items:end}.mx-partner-row>.mx-field{gap:2px}.mx-root .mx-partner-row :is(select,textarea){min-height:36px;padding:5px 8px}.mx-root .mx-partner-row textarea{height:36px;max-height:8rem;line-height:1.5}.mx-partner-meta{display:flex;align-items:center;gap:4px 8px;flex-wrap:wrap;margin-top:4px;padding-block:2px}.mx-partner-model{flex:0 1 auto;max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mx-result-chooser{display:flex;align-items:center;gap:6px;max-width:min(100%,22rem);min-width:0}.mx-result-chooser select{min-width:0}.mx-root .mx-result-chooser select{min-height:28px;padding:3px 6px;width:auto;max-width:min(16rem,100%);font-size:var(--mx-meta-size);text-overflow:ellipsis}.mx-legacy-recovery{border-inline-start:2px solid var(--dsw-alias-state-warn-primary);padding-inline-start:10px}
+.mx-status{display:inline-flex;align-items:center;gap:6px;font-size:var(--mx-meta-size);color:var(--dsw-alias-label-secondary)}.mx-status[data-tone=warn]{color:var(--dsw-alias-state-warn-primary)}.mx-status[data-tone=success]{color:var(--dsw-alias-state-success-primary)}
 .mx-banner{border:1px solid var(--dsw-alias-border-l2);border-inline-start:3px solid var(--dsw-alias-state-warn-primary);padding:12px 14px;border-radius:8px;margin-bottom:14px;background:var(--dsw-alias-bg-layer-1);overflow-wrap:anywhere}.mx-banner.mx-error{border-inline-start-color:var(--dsw-alias-state-error-primary)}.mx-banner.mx-info{border-inline-start-color:var(--dsw-alias-brand-primary)}
 .mx-badge{display:inline-block;border:1px solid var(--dsw-alias-border-l1);border-radius:20px;padding:1px 8px;font-size:11px;color:var(--dsw-alias-label-secondary)}.mx-nav{display:flex;gap:6px;overflow:auto;padding:2px 0 10px;margin-bottom:6px}.mx-nav button{flex-shrink:0;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mx-root details>summary{cursor:pointer;font-size:13px;padding:6px 0}.mx-root details[open]>summary{margin-bottom:9px}.mx-root pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:12px;line-height:1.65;max-height:340px;overflow:auto;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;padding:10px}.mx-root ul{padding-inline-start:20px;margin:4px 0}.mx-root li{overflow-wrap:anywhere}
+.mx-root details>summary{cursor:pointer;font-size:var(--mx-field-size);padding:6px 0}.mx-root details[open]>summary{margin-bottom:9px}.mx-root pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:var(--mx-meta-size);line-height:1.65;max-height:340px;overflow:auto;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;padding:10px}.mx-root ul{padding-inline-start:20px;margin:4px 0}.mx-root li{overflow-wrap:anywhere}
 .mx-compare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.mx-cards{display:grid;grid-template-columns:minmax(220px,1fr) minmax(0,1.4fr);gap:18px;align-items:start}.mx-card{display:flex;flex-direction:column;gap:8px;padding:14px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-layer-1)}.mx-card[aria-current=true]{border-color:var(--dsw-alias-brand-primary)}.mx-card p{white-space:pre-wrap;overflow-wrap:anywhere;max-height:100px;overflow:auto}.mx-check{display:flex;align-items:center;gap:8px}.mx-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.mx-revision-preview{min-height:0;font-size:16px;line-height:1.9;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2;background:var(--dsw-alias-bg-base);padding:10px 0}.mx-revision-hunk{display:block;position:relative;border:0;border-radius:0;margin:0;padding:0;white-space:normal;background:transparent}.mx-revision-text{white-space:pre-wrap;overflow-wrap:anywhere}.mx-diff-new,.mx-polish-new{border-inline-start:2px solid var(--dsw-alias-state-success-primary);background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);padding:0 72px 0 10px;min-height:1.9em}.mx-diff-old,.mx-polish-original{border-inline-start:2px solid var(--dsw-alias-state-error-primary);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 7%,transparent);padding:0 10px;color:var(--dsw-alias-label-secondary)}.mx-change-actions{position:absolute;inset-block-start:0;inset-inline-end:3px;gap:3px}.mx-revision-hunk>.mx-stack:has(.mx-decision){position:absolute;inset-block-start:0;inset-inline-end:3px;gap:2px}.mx-original-context{padding:0 10px;border-inline-start:2px solid var(--dsw-alias-border-l2);font-size:13px;color:var(--dsw-alias-label-secondary)}.mx-insertion-spot{background:transparent;color:var(--dsw-alias-brand-primary);font-size:12px}.mx-revision-analysis{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
-.mx-root .mx-decision{display:inline-flex;align-items:center;justify-content:center;flex:0 0 32px;width:32px;height:32px;min-height:32px;padding:0;border-radius:5px;border:1px solid var(--dsw-alias-border-l1);background:transparent;line-height:1}.mx-root .mx-decision svg{display:block;flex:none;pointer-events:none}.mx-root .mx-decision-accept{color:var(--dsw-alias-state-success-primary)}.mx-root .mx-decision-reject{color:var(--dsw-alias-state-error-primary)}.mx-root .mx-decision-accept:hover:not(:disabled){border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 50%,var(--dsw-alias-border-l1));background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent)}.mx-root .mx-decision-reject:hover:not(:disabled){border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary) 50%,var(--dsw-alias-border-l1));background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}.mx-root .mx-decision:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
-.mx-selection-popup{position:fixed;inset:auto;margin:0;z-index:900;gap:8px;padding:10px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:0 6px 24px color-mix(in srgb,var(--dsw-alias-label-primary) 18%,transparent);overflow:auto}.mx-selection-popup .mx-actions{gap:6px}.mx-selection-popup .mx-actions>button{flex:0 1 auto}.mx-selection-popup:popover-open{display:flex}.mx-selection-popup:not(:popover-open){display:none}.mx-job-terminal{max-width:min(100%,55ch);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mx-job-terminal[role=alert]{color:var(--dsw-alias-state-error-primary)}.mx-job-poll button{font-size:12px;min-height:28px;padding:3px 7px}.mx-review-notice{font-size:12px;gap:6px}.mx-review-notice strong{font-weight:500}.mx-revision-hunk[data-state=rejected]>.mx-diff-new{background:transparent;border-inline-start-color:var(--dsw-alias-border-l2)}.mx-summary-preview{min-height:0;padding:0}.mx-polish-preview{min-height:0}.mx-polish-block h3{font-size:12px;color:var(--dsw-alias-label-secondary);margin:0}.mx-polish-new{border-radius:0}.mx-polish-original{margin:0;padding-block:0;border-top:0}
+.mx-revision-preview{min-height:0;font-size:var(--mx-content-size);line-height:1.9;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2;background:var(--dsw-alias-bg-base);padding:10px 0}.mx-revision-hunk{display:block;position:relative;border:0;border-radius:0;margin:0;padding:0;white-space:normal;background:transparent}.mx-revision-text{white-space:pre-wrap;overflow-wrap:anywhere}.mx-diff-new,.mx-polish-new{border-inline-start:2px solid var(--dsw-alias-state-success-primary);background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);padding:0 72px 0 10px;min-height:1.9em}.mx-diff-old,.mx-polish-original{border-inline-start:2px solid var(--dsw-alias-state-error-primary);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 7%,transparent);padding:0 10px;color:var(--dsw-alias-label-secondary)}.mx-change-actions{position:absolute;inset-block-start:0;inset-inline-end:3px;gap:3px}.mx-revision-hunk>.mx-stack:has(.mx-decision){position:absolute;inset-block-start:0;inset-inline-end:3px;gap:2px}.mx-original-context{padding:0 10px;border-inline-start:2px solid var(--dsw-alias-border-l2);font-size:var(--mx-field-size);color:var(--dsw-alias-label-secondary)}.mx-insertion-spot{background:transparent;color:var(--dsw-alias-brand-primary);font-size:var(--mx-meta-size)}.mx-revision-analysis{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--mx-field-size)}
+.mx-root .mx-decision{display:inline-flex;align-items:center;justify-content:center;flex:0 0 32px;width:32px;height:32px;min-height:32px;padding:0;border-radius:5px;border:1px solid var(--dsw-alias-border-l1);background:transparent;line-height:1}.mx-root .mx-decision svg{display:block;flex:none;pointer-events:none}.mx-root .mx-decision-accept{color:var(--dsw-alias-state-success-primary)}.mx-root .mx-decision-reject{color:var(--dsw-alias-state-error-primary)}.mx-root .mx-constraint-done{color:var(--dsw-alias-brand-primary)}.mx-root .mx-decision-accept:hover:not(:disabled){border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 50%,var(--dsw-alias-border-l1));background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent)}.mx-root .mx-decision-reject:hover:not(:disabled){border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary) 50%,var(--dsw-alias-border-l1));background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}.mx-root .mx-constraint-done:hover:not(:disabled){border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 50%,var(--dsw-alias-border-l1));background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent)}.mx-root .mx-decision:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
+.mx-selection-popup{position:fixed;inset:auto;margin:0;z-index:900;gap:8px;padding:10px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:0 6px 24px color-mix(in srgb,var(--dsw-alias-label-primary) 18%,transparent);overflow:auto}.mx-selection-popup .mx-actions{gap:6px}.mx-selection-popup .mx-actions>button{flex:0 1 auto}.mx-selection-popup:popover-open{display:flex}.mx-selection-popup:not(:popover-open){display:none}.mx-job-terminal{max-width:min(100%,55ch);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mx-job-terminal[role=alert]{color:var(--dsw-alias-state-error-primary)}.mx-job-poll button{font-size:var(--mx-meta-size);min-height:28px;padding:3px 7px}.mx-review-notice{font-size:var(--mx-meta-size);gap:6px}.mx-review-notice strong{font-weight:500}.mx-revision-hunk[data-state=rejected]>.mx-diff-new{background:transparent;border-inline-start-color:var(--dsw-alias-border-l2)}.mx-summary-preview{flex:0 0 auto;min-height:0;max-height:12rem;overflow:auto;padding:0}.mx-polish-preview{min-height:0}.mx-polish-block h3{font-size:var(--mx-meta-size);color:var(--dsw-alias-label-secondary);margin:0}.mx-polish-new{border-radius:0}.mx-polish-original{margin:0;padding-block:0;border-top:0}
 .mx-modal-shell{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:color-mix(in srgb,var(--dsw-alias-bg-base) 85%,transparent)}.mx-modal{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;padding:24px;width:560px;max-width:100%;max-height:90vh;overflow:auto}.mx-modal .mx-actions{justify-content:flex-end;margin-top:20px}.mx-foot{margin-top:24px;padding:16px 0;border-top:1px solid var(--dsw-alias-border-l1)}
-@container(max-width:850px){.mx-grid[data-chapters=true]{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(4rem,20%) minmax(0,1fr)}.mx-partner-row{grid-template-columns:minmax(0,1fr)}.mx-partner-row>.mx-actions{grid-column:1;grid-row:auto}.mx-cards{grid-template-columns:minmax(0,1fr)}}
-@container(max-width:520px){.mx-model-row>.mx-field,.mx-model-row>button{flex-basis:100%;width:100%}.mx-compare,.mx-form-grid{grid-template-columns:minmax(0,1fr)}.mx-panel{padding:12px}.mx-header h1{font-size:21px}.mx-partner-row{grid-template-columns:minmax(0,1fr);gap:6px}.mx-partner-row .mx-field{gap:2px}.mx-partner-meta{gap:4px}.mx-partner-meta>span:first-child{max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mx-writing-partner{padding:4px 0}.mx-partner-row>.mx-actions>button{min-height:28px;padding:4px 8px}.mx-result-chooser{max-width:180px}.mx-root .mx-result-chooser select{max-width:130px}.mx-actions>button{flex-grow:1}}
-.mx-root-writing{display:flex;flex-direction:column;overflow:auto;gap:8px;padding-block:12px}.mx-root-writing>.mx-header{flex:none;margin:0}.mx-root-writing>.mx-header h1{font-size:18px}.mx-root-writing>.mx-header>div:first-child>.mx-hint{display:none}.mx-save-controls{gap:4px}.mx-root-writing>.mx-banner{flex:none;max-height:18%;overflow:auto;margin:0;padding:6px 10px}.mx-root-writing .mx-book-workspace{flex:1 0 32rem;min-height:32rem;overflow:hidden;gap:6px}.mx-root-writing .mx-book-workspace>.mx-book-row,.mx-root-writing .mx-tabs{flex:none}.mx-root-writing .mx-tabs{margin:0;padding:2px 0 5px}.mx-book-tools{flex:0 1 auto;min-height:0;max-height:30%;overflow:auto}.mx-book-tools .mx-foot{margin:0;padding:6px 0}.mx-root-writing .mx-writing-host{display:flex;flex:1;min-height:0;overflow:hidden}.mx-root-writing .mx-grid{flex:1;min-width:0;min-height:0;overflow:hidden}.mx-editor-panel{flex:1 0 20rem;min-height:20rem;overflow:auto;gap:8px;padding:12px}.mx-editor-panel> :not(.mx-body-slot){flex:none}.mx-body-slot{display:flex;flex-direction:column;flex:1 0 16rem;min-height:16rem;overflow:hidden}.mx-body-slot>.mx-field{flex:1;min-height:0}.mx-body-slot .mx-editor{flex:1;min-height:0;height:0;resize:none}.mx-body-slot>.mx-revision-preview,.mx-body-slot>.mx-stack{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}.mx-legacy-recovery{flex:none;max-height:25%;overflow:auto}
-@media(max-height:640px){.mx-root.mx-root-writing{display:block;overflow:auto}.mx-root-writing .mx-book-workspace,.mx-root-writing .mx-writing-host,.mx-root-writing .mx-grid,.mx-root-writing .mx-writing-column{overflow:visible}.mx-root-writing .mx-writing-host{min-height:28rem}.mx-writing-partner,.mx-partner-advanced,.mx-book-tools{max-height:none}.mx-editor-panel{min-height:26rem}.mx-chapter-nav{max-height:10rem}}
-@media(max-width:600px){.mx-root{padding:12px}.mx-modal-shell{padding:16px}}
-.mx-root [hidden]{display:none!important}.mx-surface-bar{display:flex;flex:none;align-items:center;flex-wrap:wrap;gap:6px;min-height:34px;padding-inline-start:var(--dsh-frame-leading-clearance,0px)}.mx-surface-bar>button{font-size:12px;min-height:28px;padding:4px 8px}.mx-root.mx-controls-folded{display:flex;flex-direction:column}.mx-controls-folded .mx-book-workspace{flex:1;min-height:0}.mx-controls-folded .mx-writing-host{min-height:0}.mx-controls-folded .mx-writing-column{overflow:hidden;gap:0}.mx-controls-folded .mx-editor-panel{flex:1;min-height:0}.mx-controls-folded .mx-body-slot{flex:1;min-height:16rem}
+@container(max-width:850px){.mx-cards{grid-template-columns:minmax(0,1fr)}}
+@container(max-width:520px){.mx-model-row>.mx-field,.mx-model-row>button{flex-basis:100%;width:100%}.mx-compare,.mx-form-grid{grid-template-columns:minmax(0,1fr)}.mx-panel{padding:12px}.mx-actions>button{flex-grow:1}}
+.mx-root-writing .mx-content-pane{display:flex;flex-direction:column;gap:5px}.mx-root-writing .mx-content-pane>.mx-banner{flex:none;max-height:18%;overflow:auto;margin:0;padding:6px 10px}.mx-root-writing .mx-book-workspace{flex:1 0 26rem;min-height:26rem;overflow:hidden;gap:4px}.mx-root-writing .mx-writing-host{display:flex;flex:1;min-height:0;overflow:hidden}.mx-root-writing .mx-grid{flex:1;min-width:0;min-height:0;overflow:hidden}.mx-editor-panel{flex:1 0 20rem;min-height:20rem;overflow:auto;gap:8px;padding:12px}.mx-editor-panel> :not(.mx-body-slot){flex:none}.mx-body-slot{display:flex;flex-direction:column;flex:1 0 16rem;min-height:16rem;overflow:hidden}.mx-body-slot>.mx-field{flex:1;min-height:0}.mx-body-slot .mx-editor{flex:1;min-height:0;height:0;resize:none}.mx-body-slot>.mx-revision-preview,.mx-body-slot>.mx-stack{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}.mx-legacy-recovery{flex:none;max-height:25%;overflow:auto}
+@media(max-height:640px){.mx-root-writing .mx-content-pane{display:block}.mx-root-writing .mx-book-workspace,.mx-root-writing .mx-writing-host,.mx-root-writing .mx-grid,.mx-root-writing .mx-writing-column{overflow:visible}.mx-root-writing .mx-writing-host{min-height:24rem}.mx-writing-partner{max-height:none}}
+@media(max-width:600px){.mx-modal-shell{padding:16px}}
+.mx-constraints-document{min-width:0}.mx-constraints-editor-host{min-width:0;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden;background:var(--dsw-alias-bg-base)}.mx-constraints-editor-host:focus-within{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}.mx-constraints-editor-host[data-invalid=true]{border-color:var(--dsw-alias-state-error-primary)}.mx-constraints-editor-host .cm-content{min-height:20rem}.mx-constraints-editor-host .cm-scroller{max-height:clamp(20rem,65vh,48rem)}.mx-constraints-status{gap:6px;flex-wrap:wrap}.mx-constraints-current{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(100%,26ch)}.mx-constraints-actions{min-width:0}.mx-constraints-error{color:var(--dsw-alias-state-error-primary);font-weight:550}
+.mx-root .mx-constraint-guide-example{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:var(--mx-ui-size);tab-size:4}
+.mx-root [hidden]{display:none!important}.mx-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.mx-topbar{flex:0 0 auto;display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;min-height:42px;max-height:45%;overflow:auto;padding:5px 10px 5px max(10px,var(--dsh-frame-leading-clearance,0px));border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base)}
+.mx-topbar-group{display:flex;align-items:center;flex-wrap:wrap;gap:3px;min-width:0;max-width:100%}.mx-topbar-group+.mx-topbar-group{border-inline-start:1px solid var(--dsw-alias-border-l1);padding-inline-start:7px}.mx-topbar .mx-field{gap:0;flex:0 1 13rem;min-width:0}.mx-topbar-book{flex:1 1 13rem;max-width:24rem}.mx-topbar-chapter{flex:1 1 11rem;max-width:27rem}
+.mx-root .mx-topbar select{min-height:32px;text-overflow:ellipsis;padding:4px 6px;font-size:var(--mx-ui-size)}.mx-topbar-book>.mx-field,.mx-topbar-chapter>.mx-field{flex:1 1 7rem;min-width:0}.mx-topbar-actions{flex:0 1 auto}.mx-topbar-feedback{flex:0 1 auto;flex-wrap:nowrap}.mx-topbar-feedback>.mx-job-terminal{min-width:0}
+.mx-toolbar-hit{display:inline-flex;position:relative;flex:none}.mx-root .mx-toolbar-button{display:inline-flex;align-items:center;justify-content:center;position:relative;width:32px;height:32px;min-height:32px;padding:0;border:1px solid transparent;background:transparent}.mx-toolbar-button svg,.mx-toolbar-hit>button:disabled{pointer-events:none}.mx-root .mx-toolbar-button:focus-visible{outline-offset:-2px}.mx-root .mx-toolbar-button.mx-primary{border-color:var(--dsw-alias-brand-primary)}.mx-toolbar-dot{position:absolute;inset-inline-end:3px;inset-block-start:3px;width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-state-warn-primary);pointer-events:none}
+.mx-utility-page{min-width:0}.mx-utility-page h2:focus{outline-offset:3px}.mx-utility-page pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.mx-book-page-links{display:flex;flex:0 0 auto;gap:3px}.mx-utility-page .mx-subpanel{min-width:0}
+.mx-chapter-bar{display:flex;align-items:center;flex-wrap:wrap;gap:5px 8px;min-width:0}.mx-chapter-meta{display:flex;align-items:center;flex:none;flex-wrap:wrap;gap:4px}.mx-editor-panel{gap:6px;padding:9px}.mx-root .mx-editor-panel .mx-editor{padding:9px 10px}.mx-root-writing.mx-controls-folded .mx-book-workspace{flex:1 0 20rem;min-height:20rem}.mx-controls-folded .mx-writing-column{overflow:auto;gap:0}
+.mx-root textarea,.mx-constraints-editor-host,.mx-card p,.mx-history-surface pre{font-size:var(--mx-content-size)}
+@container(max-width:520px){.mx-topbar{gap:3px 6px}.mx-topbar-group+.mx-topbar-group{padding-inline-start:4px}.mx-topbar-book{flex-basis:12rem}.mx-topbar-chapter{flex-basis:8rem}.mx-partner-row{grid-template-columns:minmax(7rem,1fr) minmax(0,2fr)}.mx-partner-model{max-width:18ch}}
+@container(max-width:340px){.mx-topbar-book,.mx-topbar-chapter{flex-basis:100%}.mx-partner-row{grid-template-columns:minmax(0,1fr)}.mx-result-chooser{max-width:100%}}
 `;
 
     // UI return anchors are captured from the visible review at the author's decision,
@@ -758,20 +1783,83 @@ window.__ModuleLoader__.load({
       } finally { clip.remove(); }
     }
 
-    function Field({ label, hint, children }) {
-      return h('label', { className: 'mx-field' }, h('span', null, label), children, hint && h('span', { className: 'mx-hint' }, hint));
+    function Field({ label, hint, children, visuallyHidden = false }) {
+      return h('label', { className: 'mx-field' }, h('span', { className: visuallyHidden ? 'mx-visually-hidden' : undefined }, label), children, hint && h('span', { className: 'mx-hint' }, hint));
+    }
+    function ConstraintsTextSurface({ draft, options, focusRef, bookId, addRef, viewport, owner }) {
+      const host = useRef(null), engine = useRef(null), expected = useRef(null), latest = useRef(null);
+      const ownedComposition = useRef(false);
+      useLayoutEffect(() => {
+        let alive = true;
+        latest.current = { options };
+        const saved = viewport.current;
+        const initialViewport = saved?.bookId === bookId && sameConstraintsDraft(saved.draft, draft) ? saved.view : null;
+        const instance = __dshInspirationContinuousMarkdown.createContinuousMarkdown(host.current, {
+          ...options, ...listeners(), initialViewport, text: textareaValue(draft.text),
+        });
+        expected.current = draft;
+        engine.current = { instance, listeners };
+        const connection = { bookId, instance };
+        owner.current = connection;
+        function listeners() {
+          return {
+            acceptInput: update => alive && latest.current.options.acceptInput(update),
+            onInput: update => {
+              if (!alive) return;
+              const applied = latest.current.options.onInput(update);
+              if (applied) expected.current = applied;
+            },
+            onSelection: value => { if (alive) latest.current.options.onSelection(value); },
+            onLimit: () => { if (alive) latest.current.options.onLimit(); },
+            onCompositionStart: () => { if (alive) { ownedComposition.current = true; latest.current.options.beginComposition(); } },
+            onCompositionEnd: () => { if (alive) { ownedComposition.current = false; latest.current.options.releaseComposition(); } },
+          };
+        }
+        return () => {
+          alive = false; engine.current = null;
+          if (owner.current === connection) {
+            viewport.current = { bookId, draft: expected.current, view: instance.captureViewport() };
+            owner.current = null;
+          }
+          instance.destroy();
+          if (ownedComposition.current) latest.current.options.releaseComposition();
+          ownedComposition.current = false;
+        };
+      }, []);
+      useLayoutEffect(() => {
+        const entry = engine.current;
+        if (!entry) return;
+        latest.current = { options };
+        // Reading the synchronous workspace prevents a delayed React render from
+        // resetting a native editor that already accepted a newer keystroke.
+        const currentDraft = options.getDraft();
+        if (!currentDraft) return;
+        const resetHistory = !sameConstraintsDraft(expected.current, currentDraft);
+        expected.current = currentDraft;
+        entry.instance.sync({ ...options, ...entry.listeners(), text: textareaValue(currentDraft.text),
+          invalid: !!currentDraft.error || options.invalid, resetHistory });
+        const pending = focusRef.current;
+        if (pending?.bookId !== bookId) return;
+        focusRef.current = null;
+        if (pending.add) addRef.current?.focus();
+        else entry.instance.focusRange(pending.start, pending.end);
+      });
+      return h('div', { ref: host, className: 'mx-constraints-editor-host', 'data-invalid': options.invalid || undefined });
     }
     function Icon({ size = 18 } = {}) {
       return h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
         h('path', { d: 'M4 4.5h7a3 3 0 0 1 3 3V20a4 4 0 0 0-3-1.5H4zM14 7.5l5-4 2 2-5 4M14 12h6v6.5h-3' }),
         h('path', { d: 'M7 9h4M7 12h4M7 15h3' }));
     }
-    function Modal({ title, children, actions, onCancel, busy }) {
+    function Modal({ title, children, actions, onCancel, busy, role = 'alertdialog', id, returnFocus }) {
       const ref = useRef(null), cancelRef = useRef(null);
       useEffect(() => {
         const old = document.activeElement;
         cancelRef.current?.focus();
-        return () => { if (old?.isConnected && typeof old.focus === 'function') old.focus(); };
+        return () => {
+          const target = returnFocus?.current || old;
+          if (target?.isConnected && typeof target.focus === 'function') target.focus();
+        };
       }, []);
       const onKeyDown = e => {
         e.stopPropagation();
@@ -784,7 +1872,7 @@ window.__ModuleLoader__.load({
           else if (!e.shiftKey && (document.activeElement === last || !ref.current.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
         }
       };
-      return h('div', { className: 'mx-modal-shell' }, h('section', { className: 'mx-modal mx-stack', ref, role: 'alertdialog', 'aria-modal': true, 'aria-label': title, onKeyDown },
+      return h('div', { className: 'mx-modal-shell' }, h('section', { id, className: 'mx-modal mx-stack', ref, role, 'aria-modal': true, 'aria-label': title, onKeyDown },
         h('h2', null, title), children, h('div', { className: 'mx-actions' }, actions(cancelRef))));
     }
 
@@ -814,10 +1902,37 @@ window.__ModuleLoader__.load({
           const [error, setError] = useState(null), [notice, setNotice] = useState('');
           const [tab, setTab] = useState('writing'), [newTitle, setNewTitle] = useState(''), [newChapter, setNewChapter] = useState('');
           const [mode, setMode] = useState('draft'), [instruction, setInstruction] = useState('');
-          const [advanced, setAdvanced] = useState(false);
-          const [chaptersVisible, setChaptersVisible] = useState(false);
+          const [chapterTitleFor, setChapterTitleFor] = useState('');
+          const toolPages = ['tools', 'manage', 'context', 'advanced'];
+          const chapterTitleButtonRef = useRef(null), workspaceNavigation = useRef(0), foldButtonRef = useRef(null), foldFocusPending = useRef(false);
+          const addChapterInputRef = useRef(null), addChapterFocusPending = useRef(false);
+          const utilityHeadingRef = useRef(null), utilityFocusPending = useRef('');
+          useLayoutEffect(() => {
+            if (utilityFocusPending.current !== tab) return;
+            utilityFocusPending.current = '';
+            if (!addChapterFocusPending.current) utilityHeadingRef.current?.focus({ preventScroll: true });
+          }, [tab]);
           const [controlsFolded, setControlsFolded] = useState(false);
-          const rootRef = useRef(null), panelRef = useRef(null), columnRef = useRef(null);
+          useEffect(() => { setChapterTitleFor(''); }, [tab, w?.book.id, w?.chapterId]);
+          useLayoutEffect(() => {
+            if (!addChapterFocusPending.current || !addChapterInputRef.current) return;
+            addChapterFocusPending.current = false; addChapterInputRef.current.focus();
+          }, [tab, w?.book.id]);
+          const focusWriting = value => {
+            if (autosaveComposing.current) return;
+            closeSelectionPopup();
+            foldFocusPending.current = true; setControlsFolded(value);
+          };
+          useLayoutEffect(() => {
+            if (!foldFocusPending.current) return;
+            foldFocusPending.current = false;
+            foldButtonRef.current?.focus({ preventScroll: true });
+            foldButtonRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest', container: 'nearest' });
+          }, [controlsFolded]);
+          const rootRef = useRef(null), contentRef = useRef(null), panelRef = useRef(null), columnRef = useRef(null);
+          useLayoutEffect(() => {
+            if (contentRef.current) { contentRef.current.scrollTop = 0; contentRef.current.scrollLeft = 0; }
+          }, [tab, w?.book.id, w?.chapterId]);
           const pendingPolishViewport = useRef(null), returnIntent = useRef(0);
           const invalidateReviewReturn = () => { returnIntent.current++; pendingPolishViewport.current = null; };
           const [restoreEpoch, setRestoreEpoch] = useState(0);
@@ -832,16 +1947,46 @@ window.__ModuleLoader__.load({
           const [selectionPopup, setSelectionPopup] = useState(null), [polishRequirements, setPolishRequirements] = useState(null);
           const popupRef = useRef(null), requirementsRef = useRef(null), polishBlockRef = useRef(null);
           const [selection, setSelection] = useState(null), [context, setContext] = useState(null), [contextBusy, setContextBusy] = useState(false);
+          const [contextError, setContextError] = useState(null), [contextRefresh, setContextRefresh] = useState(0);
           const [job, setJob] = useState(null), [pollError, setPollError] = useState(false), [pollVersion, setPollVersion] = useState(0);
           const [recovery, setRecovery] = useState(null), recoveryRef = useRef(null);
           const [storageFailed, setStorageFailed] = useState(false), [conflict, setConflict] = useState(null);
           const [guard, setGuard] = useState(null), [confirm, setConfirm] = useState(null);
+          const [constraintsHelpBook, setConstraintsHelpBook] = useState('');
+          const constraintsHelpTrigger = useRef(null);
           const [manager, setManager] = useState(null), [deletionNotice, setDeletionNotice] = useState(null);
+          const uncertainDeletes = useRef(new Set());
           const [cleanupPendingCount, setCleanupPendingCount] = useState(0);
+          const [constraintsSourceBook, setConstraintsSourceBook] = useState('');
+          const [constraintsCursor, setConstraintsCursor] = useState(null), [constraintsLimit, setConstraintsLimit] = useState('');
+          const constraintsFocusRef = useRef(null), constraintsAddRef = useRef(null), constraintsViewport = useRef(null);
+          const constraintsHistory = useRef(new WeakMap()), constraintsEngine = useRef(null), pendingConstraintsStructure = useRef(null);
+          const constraintsProjection = useMemo(() => tab === 'constraints' && w?.constraintsEditor && !w.constraintsEditor.error ?
+            constraintVisualTargets(w.constraintsEditor.text, w.settings.writingConstraints, null) : null,
+            [tab, w?.constraintsEditor?.text, w?.constraintsEditor?.error, w?.settings.writingConstraints]);
+          const constraintsOffsets = useMemo(() => normalizedSourceOffsets(tab === 'constraints' ? w?.constraintsEditor?.text ?? '' : ''),
+            [tab, w?.constraintsEditor?.text]);
           const editorRef = useRef(null), composing = useRef(false), alive = useRef(false), busyRef = useRef(false);
+          const autosaveRef = useRef(null), autosaveBindings = useRef(null), autosaveComposing = useRef(false);
           const epoch = useRef(0), availabilityEpoch = useRef(0), listSequence = useRef(0), contextSequence = useRef(0), selectionRef = useRef(null);
           const requests = useRef(new Set()), downloads = useRef(new Map()), liveJobs = useRef([]), pendingLatest = useRef(null), unavailableBooks = useRef(new Map());
           const formId = useRef('inspiration-' + Math.random().toString(36).slice(2));
+          const switchTab = value => {
+            if (autosaveComposing.current) return;
+            const active = current.current;
+            reviewRef.current = null; setSelectionPopup(null); invalidateReviewReturn(); contextSequence.current++;
+            if (tab === 'manage' && value !== 'manage' && !autosaveRef.current?.failed) setError(null);
+            setManager(value === 'manage' && active ? {
+              snapshot: managementSnapshot(active), title: active.book.title, typedTitle: '', uncertain: uncertainDeletes.current.has(active.book.id),
+            } : null);
+            setTab(value);
+          };
+          const navigatePage = value => {
+            if (busyRef.current || loading || autosaveComposing.current || guard || confirm || polishRequirements || value === tab) return;
+            workspaceNavigation.current++;
+            utilityFocusPending.current = toolPages.includes(value) ? value : '';
+            switchTab(value);
+          };
 
           const commit = next => { current.current = next; setW(next); };
           const assignRecovery = value => { recoveryRef.current = value; setRecovery(value); };
@@ -854,8 +1999,10 @@ window.__ModuleLoader__.load({
             try { localStorage.removeItem(STORAGE + bookId); } catch { setStorageFailed(true); }
           };
           const persist = value => {
-            if (!value || deletedBookIds.has(value.book.id) || !isDirty(value)) return;
-            const payload = recoveryPayload(value);
+            if (!value || deletedBookIds.has(value.book.id)) return;
+            const projected = autosaveRecoveryWorkspace(value, autosaveRef.current?.pendingSnapshot);
+            if (!isDirty(projected)) return;
+            const payload = autosaveRecoveryPayload(value, autosaveRef.current || {});
             memoryDrafts.set(value.book.id, payload);
             try { localStorage.setItem(STORAGE + value.book.id, JSON.stringify(payload)); if (alive.current) setStorageFailed(false); }
             catch { if (alive.current) setStorageFailed(true); }
@@ -867,7 +2014,7 @@ window.__ModuleLoader__.load({
               try { const raw = localStorage.getItem(STORAGE + bookId); if (raw) value = JSON.parse(raw); }
               catch { setStorageFailed(true); }
             }
-            return validRecovery(value, bookId) ? value : null;
+            return validAutosaveRecovery(value, bookId) ? value : null;
           };
           const rememberJob = value => {
             if (!value?.bookId || deletedBookIds.has(value.bookId)) return;
@@ -965,34 +2112,40 @@ window.__ModuleLoader__.load({
             setCleanupPendingCount(Number.isSafeInteger(data.cleanupPending) && data.cleanupPending > 0 ? data.cleanupPending : 0);
             return visible;
           };
-          const refreshWorkspace = () => transition(() => withBusy(async () => {
-            const data = await refreshList(), active = current.current;
-            if (!data) return;
-            if (active && !data.books.some(book => book.id === active.book.id)) {
-              // An external deletion or an ambiguous earlier request is not a
-              // deletion receipt: preserve the displayed copy and local drafts.
-              const missing = markBookUnavailable({ unavailable: unavailableBooks.current, pendingLatest: pendingLatest.current }, active.book.id, listSequence.current);
-              unavailableBooks.current = missing.unavailable; pendingLatest.current = missing.pendingLatest; epoch.current++; availabilityEpoch.current++;
-              persist(active); setError({ code: 'NOT_FOUND', message: t('bookMissing') }); return;
-            }
-            if (active) await openBook(active.book.id, active.chapterId);
-            else if (data.books.length) await openBook(data.books[0].id);
-          }));
+          const refreshWorkspace = () => {
+            const stillRequested = navigationIntent();
+            return transition(() => withBusy(async () => {
+              const data = await refreshList(), active = current.current;
+              if (!data) return;
+              if (active && !data.books.some(book => book.id === active.book.id)) {
+                // An external deletion or an ambiguous earlier request is not a
+                // deletion receipt: preserve the displayed copy and local drafts.
+                const missing = markBookUnavailable({ unavailable: unavailableBooks.current, pendingLatest: pendingLatest.current }, active.book.id, listSequence.current);
+                unavailableBooks.current = missing.unavailable; pendingLatest.current = missing.pendingLatest; epoch.current++; availabilityEpoch.current++;
+                persist(active); setError({ code: 'NOT_FOUND', message: t('bookMissing') }); return;
+              }
+              const page = toolPages.includes(tab) ? tab : 'writing';
+              if (active) await openBook(active.book.id, active.chapterId, page, true);
+              else if (data.books.length) await openBook(data.books[0].id, undefined, page, true);
+            }), 'all', stillRequested);
+          };
           const syncBookList = book => setBooks(previous => {
             if (!bookIsAvailable(book.id, deletedBookIds, unavailableBooks.current)) return previous;
             const entry = { id: book.id, title: book.title, chapterCount: book.chapters.length, updatedAt: book.updatedAt };
             return previous.some(b => b.id === book.id) ? previous.map(b => b.id === book.id ? entry : b) : [...previous, entry];
           });
           const resetSelection = () => { setSelectionPopup(null); setPolishRequirements(null); selectionRef.current = null; setSelection(null); setContext(null); setContextBusy(false); contextSequence.current++; };
-          const openBook = async (bookId, preferredChapter) => {
+          const openBook = async (bookId, preferredChapter, page = 'writing', reconcileDelete = false) => {
             if (!bookIsAvailable(bookId, deletedBookIds, unavailableBooks.current)) return false;
+            autosaveRef.current?.cancel(); autosaveRef.current?.resetFailure();
             const serial = ++epoch.current;
             setLoading(true); setError(null); setNotice(''); setConflict(null); pendingLatest.current = null; resetSelection();
             try {
               const book = await call('get', { bookId });
               if (!alive.current || epoch.current !== serial || !bookIsAvailable(book.id, deletedBookIds, unavailableBooks.current)) return false;
               commit(workspace(book, preferredChapter)); syncBookList(book); assignRecovery(readRecovery(book.id));
-              setJob(readJob(book.id)); setPollError(false); setPollVersion(value => value + 1); setTab('writing');
+              if (reconcileDelete) uncertainDeletes.current.delete(book.id);
+              setJob(readJob(book.id)); setPollError(false); setPollVersion(value => value + 1); switchTab(page);
               return true;
             } catch (e) { if (serial === epoch.current) messageError(e); return false; }
             finally { if (alive.current && epoch.current === serial) setLoading(false); }
@@ -1002,9 +2155,17 @@ window.__ModuleLoader__.load({
             if (!active || active.book.id !== book.id || !bookIsAvailable(book.id, deletedBookIds, unavailableBooks.current)) return false;
             if (book.revision < active.book.revision) return false;
             const conflicts = conflictingFields(active, book).filter(kind => kind !== cleared);
-            if (conflicts.length) { setConflict({ book, fields: conflicts }); persist(active); return false; }
-            commit(mergeWorkspace(active, book, cleared)); syncBookList(book); setConflict(null); setContext(null);
+            if (conflicts.length) { setConflict({ book, fields: conflicts }); setError({ code: 'CONFLICT', message: t('conflictTitle') }); persist(active); return false; }
+            const next = mergeWorkspace(active, book, cleared);
+            // A refresh for an unrelated Host update is not an instruction to
+            // canonicalize author formatting or reset the editor's undo stack.
+            if (!dirty(active).settings && cleared !== 'settings' && equal(active.settings.writingConstraints, next.settings.writingConstraints))
+              next.constraintsEditor = active.constraintsEditor;
+            commit(next); syncBookList(book); setConflict(null); setContext(null);
             return true;
+          };
+          const queueLatest = book => {
+            if (!pendingLatest.current || pendingLatest.current.id !== book.id || pendingLatest.current.revision < book.revision) pendingLatest.current = book;
           };
           const loadLatest = async () => {
             const active = current.current, serial = epoch.current;
@@ -1012,20 +2173,28 @@ window.__ModuleLoader__.load({
             const book = await call('get', { bookId: active.book.id });
             if (!alive.current || epoch.current !== serial || current.current?.book.id !== book.id) return;
             // A poll read must not re-introduce old edits during an in-flight save.
-            if (busyRef.current) { pendingLatest.current = book; return; }
+            if (busyRef.current || autosaveRef.current?.running) { queueLatest(book); return; }
             adopt(book);
           };
-          const withBusy = async action => {
-            if (busyRef.current || loading) return false;
+          const withBusy = async (action, waitForAutosave = true, allowAutosaveFailure = false) => {
+            if (busyRef.current || loading || autosaveComposing.current) return false;
+            const serial = epoch.current, bookId = current.current?.book.id;
             busyRef.current = true; setBusy(true); setError(null);
-            try { await action(); return true; }
+            try {
+              if (waitForAutosave) await autosaveRef.current?.wait();
+              if (!alive.current || epoch.current !== serial || current.current?.book.id !== bookId) return false;
+              if (waitForAutosave && autosaveRef.current?.failed && !allowAutosaveFailure) throw new Error(t('autosavePaused'));
+              await action(); return true;
+            }
             catch (e) { messageError(e); return false; }
             finally {
               busyRef.current = false;
               if (alive.current) {
                 setBusy(false);
-                const waiting = pendingLatest.current; pendingLatest.current = null;
-                if (waiting && waiting.id === current.current?.book.id && waiting.revision >= current.current.book.revision) adopt(waiting);
+                if (!autosaveRef.current?.running) {
+                  const waiting = pendingLatest.current; pendingLatest.current = null;
+                  if (waiting && waiting.id === current.current?.book.id && waiting.revision > current.current.book.revision) adopt(waiting);
+                }
               }
             }
           };
@@ -1036,55 +2205,122 @@ window.__ModuleLoader__.load({
             if (!adopt(book, cleared)) throw Object.assign(new Error(t('conflictTitle')), { code: 'CONFLICT' });
             return book;
           };
+          autosaveBindings.current = {
+            paused: manual => !alive.current || loading || !!recoveryRef.current || !!conflict || autosaveComposing.current ||
+              !current.current || !bookIsAvailable(current.current.book.id, deletedBookIds, unavailableBooks.current) ||
+              !manual && (busyRef.current || !!guard || !!confirm || !!polishRequirements),
+            send: request => call('mutate', request),
+            apply: (next, book) => {
+              commit(next); syncBookList(book); setContext(null);
+              if (isDirty(next)) persist(next); else forgetDraft(book.id);
+            },
+            started: () => persist(current.current),
+            fail: error => {
+              persist(current.current);
+              messageError({ ...error, code: error.code, message: ['autosaveReceipt', 'constraintsCrypto'].includes(error.message) ? t(error.message) : error.message });
+            },
+            settled: () => {
+              if (!alive.current || busyRef.current) return;
+              const waiting = pendingLatest.current; pendingLatest.current = null;
+              if (waiting && waiting.id === current.current?.book.id && waiting.revision > current.current.book.revision) adopt(waiting);
+            },
+          };
+          if (!autosaveRef.current) autosaveRef.current = createAutosaveController({
+            getWorkspace: () => current.current, getEpoch: () => epoch.current,
+            isPaused: manual => autosaveBindings.current.paused(manual), send: request => autosaveBindings.current.send(request),
+            apply: (...args) => autosaveBindings.current.apply(...args), fail: error => autosaveBindings.current.fail(error),
+            started: () => autosaveBindings.current.started(), settled: () => autosaveBindings.current.settled(),
+          });
+          const reconcileAutosaveFailure = async () => {
+            const controller = autosaveRef.current, pending = controller.pendingSnapshot;
+            if (!controller.failed) return;
+            if (!pending) { controller.resetFailure(); return; }
+            const serial = epoch.current, active = current.current;
+            const latest = await call('get', { bookId: active.book.id });
+            if (!alive.current || epoch.current !== serial || current.current?.book.id !== active.book.id) throw new DOMException('Panel changed', 'AbortError');
+            let next;
+            if (latest.revision === pending.snapshot.book.revision) next = mergeWorkspace(current.current, latest);
+            else if (latest.revision === pending.snapshot.book.revision + 1 && autosaveOperationApplied(latest, pending.snapshot, pending.step)) {
+              next = mergeAutosaveAck(current.current, pending.snapshot, latest, pending.step);
+            } else {
+              const journal = autosaveRecoveryPayload(current.current, controller);
+              next = restoredAutosaveWorkspace(workspace(latest, current.current.chapterId), journal);
+              const fields = conflictingFields(next, latest);
+              if (fields.length) { setConflict({ book: latest, fields }); throw Object.assign(new Error(t('conflictTitle')), { code: 'CONFLICT' }); }
+              next = mergeWorkspace(next, latest, null, true);
+            }
+            if (!next) throw Object.assign(new Error(t('autosaveReceipt')), { code: 'CONFLICT' });
+            commit(next); syncBookList(latest); controller.resetFailure();
+            controller.restorePendingCard(next.card && !next.card.id ? controller.pendingCard : null, next.baseCard);
+          };
           const saveAll = async () => {
             if (!current.current || conflict) return false;
             const ok = await withBusy(async () => {
-              let active = current.current;
-              if (dirty(active).chapter) {
-                await mutateRaw({ action: 'updateChapter', chapterId: active.chapterId, patch: patchOf(active.baseChapter, active.chapter) }, 'chapter');
-              }
-              active = current.current;
-              if (dirty(active).settings) {
-                const patch = patchOf(active.baseSettings, active.settings);
-                if ('contextBudget' in patch) {
-                  patch.contextBudget = Number(patch.contextBudget);
-                  if (!Number.isSafeInteger(patch.contextBudget) || patch.contextBudget < 1000 || patch.contextBudget > 60000) throw new Error(t('invalidBudget'));
-                }
-                await mutateRaw({ action: 'updateBook', patch }, 'settings');
-              }
-              active = current.current;
-              if (dirty(active).card) {
-                const card = { ...active.card, fromChapter: Number(active.card.fromChapter), toChapter: active.card.toChapter.trim() === '' ? null : Number(active.card.toChapter), tags: active.card.tags.split(/[,，]/).map(s => s.trim()).filter(Boolean) };
-                if (!Number.isSafeInteger(card.fromChapter) || card.fromChapter < 1 || (card.toChapter !== null && (!Number.isSafeInteger(card.toChapter) || card.toChapter < card.fromChapter))) throw new Error(t('invalidScope'));
-                await mutateRaw({ action: 'saveCard', card }, 'card');
-              }
-              active = current.current;
-              if (dirty(active).candidate) await mutateRaw({ action: 'updateProposal', proposalId: active.candidateId, text: active.candidate }, 'candidate');
-              if (alive.current) { forgetDraft(current.current.book.id); assignRecovery(null); setNotice(t('saved')); }
-            });
+              await reconcileAutosaveFailure();
+              if (current.current.constraintsEditor?.error) throw new Error(t(current.current.constraintsEditor.error));
+              if (dirty(current.current).settings && !validWritingConstraints(current.current.settings.writingConstraints)) throw new Error(t('constraintsInvalid'));
+              if (!await autosaveRef.current.flush({ manual: true, retry: true })) throw new Error(t('autosavePaused'));
+              const active = current.current, d = dirty(active);
+              if (d.chapter || d.settings || d.card) throw new Error(t('autosaveIncomplete'));
+              if (d.candidate) await mutateRaw({ action: 'updateProposal', proposalId: active.candidateId, text: active.candidate }, 'candidate');
+              if (alive.current) { forgetDraft(current.current.book.id); assignRecovery(null); setNotice(''); }
+            }, true, true);
             if (!ok && current.current) persist(current.current);
             return ok;
           };
-          const discardScope = scope => {
+          const discardScope = async scope => {
+            const serial = epoch.current, bookId = current.current?.book.id;
+            await autosaveRef.current.wait();
+            if (epoch.current !== serial || current.current?.book.id !== bookId) return false;
+            if (autosaveRef.current.failed && autosaveRef.current.pendingSnapshot) {
+              try {
+                const latest = await call('get', { bookId });
+                if (!alive.current || epoch.current !== serial || current.current?.book.id !== bookId) return false;
+                const journal = autosaveRecoveryPayload(current.current, autosaveRef.current);
+                const recovered = restoredAutosaveWorkspace(workspace(latest, current.current.chapterId), journal);
+                commit(scope === 'all' ? workspace(latest, current.current.chapterId) : mergeWorkspace(recovered, latest, scope));
+                syncBookList(latest);
+              } catch (error) { messageError(error); return false; }
+            }
+            autosaveRef.current.cancel(); autosaveRef.current.resetFailure();
             const active = current.current;
             if (!active) return;
             if (scope === 'candidate') commit({ ...active, candidate: active.baseCandidate });
             else if (scope === 'card') commit({ ...active, card: active.baseCard });
             else { commit(workspace(active.book, active.chapterId)); setConflict(null); }
+            const remainingConflicts = conflictingFields(current.current, current.current.book);
+            if (remainingConflicts.length) setConflict({ book: current.current.book, fields: remainingConflicts });
             if (!isDirty(current.current)) forgetDraft(active.book.id); else persist(current.current);
+            return true;
           };
-          const transition = (run, scope = 'all') => {
-            if (busyRef.current || loading) return;
+          const transition = async (run, scope = 'all', stillRequested = () => true) => {
+            if (busyRef.current || loading || autosaveComposing.current) return;
+            const serial = epoch.current, bookId = current.current?.book.id;
+            await autosaveRef.current.flush();
+            if (epoch.current !== serial || current.current?.book.id !== bookId || busyRef.current || autosaveComposing.current || !stillRequested()) return;
             invalidateReviewReturn();
-            const d = dirty(current.current);
-            if (scope === 'all' ? isDirty(current.current) : d[scope]) setGuard({ run, scope });
+            const projected = autosaveRecoveryWorkspace(current.current, autosaveRef.current.pendingSnapshot), d = dirty(projected);
+            if (scope === 'all' ? isDirty(projected) : d[scope]) setGuard({ run, scope });
             else run();
           };
-          const changeChapter = chapterId => transition(() => {
-            const active = current.current;
-            if (!active || active.chapterId === chapterId) return;
-            epoch.current++; commit(workspace(active.book, chapterId)); resetSelection(); setError(null); setNotice(''); setConflict(null); setTab('writing');
-          });
+          const navigationIntent = () => {
+            const ticket = ++workspaceNavigation.current, bookId = current.current?.book.id;
+            return () => workspaceNavigation.current === ticket && current.current?.book.id === bookId;
+          };
+          const selectBook = bookId => {
+            const stillRequested = navigationIntent();
+            if (bookId && current.current?.book.id !== bookId)
+              return transition(() => { if (stillRequested()) openBook(bookId, undefined, toolPages.includes(tab) ? tab : 'writing'); }, 'all', stillRequested);
+          };
+          const changeChapter = chapterId => {
+            const stillRequested = navigationIntent();
+            if (!current.current?.book.chapters.some(chapter => chapter.id === chapterId) || current.current.chapterId === chapterId) return;
+            return transition(() => {
+              const active = current.current;
+              if (!stillRequested() || !active || active.chapterId === chapterId || !active.book.chapters.some(chapter => chapter.id === chapterId)) return;
+              epoch.current++; commit(workspace(active.book, chapterId)); resetSelection(); setError(null); setNotice(''); setConflict(null); switchTab(toolPages.includes(tab) ? tab : 'writing');
+            }, 'all', stillRequested);
+          };
           const download = (filename, mime, text) => {
             const url = URL.createObjectURL(new Blob([text], { type: mime }));
             const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.click();
@@ -1092,7 +2328,8 @@ window.__ModuleLoader__.load({
             downloads.current.set(url, timer);
           };
           const downloadLocal = () => {
-            const payload = current.current && isDirty(current.current) ? recoveryPayload(current.current) : recoveryRef.current;
+            const active = current.current, projected = autosaveRecoveryWorkspace(active, autosaveRef.current?.pendingSnapshot);
+            const payload = active && isDirty(projected) ? autosaveRecoveryPayload(active, autosaveRef.current || {}) : recoveryRef.current;
             if (payload) download('inspiration-local-edits.json', 'application/json', JSON.stringify(payload, null, 2));
           };
           const changeField = (group, field, value) => {
@@ -1102,7 +2339,61 @@ window.__ModuleLoader__.load({
             const nextValue = multiline ? applyTextareaEdit(active[group][field], value) : value;
             commit({ ...active, [group]: { ...active[group], [field]: nextValue } });
             if (group === 'chapter' && field === 'body') resetSelection();
+            if (group !== 'candidate') autosaveRef.current.schedule();
             setNotice('');
+          };
+          const constraintsInputBlocked = (confirmed = false) => busyRef.current || loading || !!recoveryRef.current || !!manager || !!guard || !!confirm && !confirmed;
+          const acceptConstraintInput = (bookId, update) => {
+            const active = current.current, structure = update.payload;
+            if (!alive.current || active?.book.id !== bookId || constraintsInputBlocked(structure?.confirmed === true) ||
+                !update.beforeVersion || !update.version || typeof update.beforeVersion !== 'object' || typeof update.version !== 'object') return false;
+            const previous = constraintsHistory.current.get(update.beforeVersion);
+            if (previous && !sameConstraintsDraft(previous, constraintsHistorySnapshot(active))) return false;
+            if (structure) return structure === pendingConstraintsStructure.current && structure.before === active && !autosaveComposing.current &&
+              textareaValue(active.constraintsEditor.text) === update.before && textareaValue(structure.after.constraintsEditor.text) === update.text;
+            const saved = constraintsHistoryTarget(update, constraintsHistory.current);
+            // An admitted history token already carries the exact raw EOLs.
+            // Do not synthesize them from today's first line ending on Undo.
+            const source = saved ? textareaValue(active.constraintsEditor.text) : active.constraintsEditor.text;
+            try { return applyConstraintsChanges(source, update) !== null; }
+            catch (error) { return error.message === 'constraintsMarkdownTooLong' ? 'limit' : false; }
+          };
+          const changeConstraintsMarkdown = (bookId, update) => {
+            if (acceptConstraintInput(bookId, update) !== true) return false;
+            const active = current.current, history = constraintsHistory.current;
+            const saved = constraintsHistoryTarget(update, history);
+            const next = update.payload?.after ?? applyConstraintsInput(active, update,
+              saved?.text ?? applyConstraintsChanges(active.constraintsEditor.text, update), saved);
+            if (next === active) return false;
+            if (!history.has(update.beforeVersion)) history.set(update.beforeVersion, constraintsHistorySnapshot(active));
+            history.set(update.version, constraintsHistorySnapshot(next));
+            commit(next);
+            // Clean undo before a request must also clear the outdated local
+            // journal. An in-flight/failed write can still need its undo tail.
+            if (!recoveryRef.current && !isDirty(autosaveRecoveryWorkspace(next, autosaveRef.current.pendingSnapshot))) {
+              const journal = memoryDrafts.get(bookId);
+              if (journal?.constraintsEditor?.text === active.constraintsEditor.text) {
+                memoryDrafts.delete(bookId);
+                try {
+                  if (localStorage.getItem(STORAGE + bookId) === JSON.stringify(journal)) localStorage.removeItem(STORAGE + bookId);
+                } catch { setStorageFailed(true); }
+              }
+            } else persist(next);
+            autosaveRef.current.schedule(); setConstraintsLimit(''); setNotice(''); return true;
+          };
+          const changeWritingConstraint = (bookId, action, { confirmed = false } = {}) => {
+            const active = current.current, owner = constraintsEngine.current;
+            if (constraintsInputBlocked(confirmed) || autosaveComposing.current || active?.constraintsEditor?.error ||
+                active?.book.id !== bookId || owner?.bookId !== bookId) return null;
+            try {
+              const next = editWritingConstraints(active, bookId, action);
+              if (next === active) return null;
+              const payload = { before: active, after: next, confirmed };
+              pendingConstraintsStructure.current = payload;
+              owner.instance.applyStructure({ text: textareaValue(next.constraintsEditor.text), payload });
+              return current.current === next ? next : null;
+            } catch (e) { setError({ message: t(e.message) }); return null; }
+            finally { pendingConstraintsStructure.current = null; }
           };
           const closeSelectionPopup = () => setSelectionPopup(null);
           const captureSelection = event => {
@@ -1127,12 +2418,6 @@ window.__ModuleLoader__.load({
               if (position) setSelectionPopup({ snapshot, anchor, position });
             }
           };
-          const selectedSource = () => {
-            const snapshot = selectionRef.current, active = current.current;
-            // Sidebar polish uses the same immutable source identity as the popup.
-            if (polishIntentProblem(active, snapshot)) return null;
-            return { start: snapshot.start, end: snapshot.end, text: snapshot.text };
-          };
           const polishRequestProblem = snapshot => polishIntentProblem(current.current, snapshot, {
             recovery: recoveryRef.current, conflict, intent: selectionRef.current, composing: composing.current, busy: busyRef.current || loading || !!manager || !!guard || !!confirm,
             running: job?.status === 'running' || liveJobs.current.some(j => j.bookId === snapshot?.bookId && (j.status === 'running' || j.settled === false)),
@@ -1141,7 +2426,7 @@ window.__ModuleLoader__.load({
           });
           const startPolish = (snapshot, direction, custom = false) => {
             // Selection alone NEVER calls the API. This is reached only by an
-            // explicit toolbar/sidebar click or explicit requirements submission.
+            // explicit click in the selection popup or requirements submission.
             const problem = polishRequestProblem(snapshot);
             if (problem || custom && !direction.trim()) { setError({ message: t(problem || 'polishRequirement') }); return; }
             const expectedModelRevision = modelPrefsRef.current.settings.revision;
@@ -1165,37 +2450,35 @@ window.__ModuleLoader__.load({
               rememberJob(next);
               if (alive.current && current.current?.book.id === snapshot.bookId) {
                 setJob(next); setPollError(false); setOriginalPolishKey(null); closeSelectionPopup(); setPolishRequirements(null);
-                setMode('polish'); setInstruction(direction); setNotice('');
+                setNotice('');
               }
             });
           };
-          const contextKey = () => JSON.stringify([current.current?.book.id, current.current?.book.revision, current.current?.chapterId, mode, instruction, selectionRef.current]);
-          const previewContext = async () => {
-            if (!current.current || isDirty(current.current) || busyRef.current) return;
-            const picked = mode === 'polish' ? selectedSource() : null;
-            if (mode === 'polish' && !picked) { setError({ message: t('polishFirst') }); return; }
-            if (mode === 'revise' && !instruction.trim()) { setError({ message: t('reviseRequirement') }); return; }
+          const contextKey = () => JSON.stringify([current.current?.book.id, current.current?.book.revision, current.current?.chapterId, mode, instruction]);
+          const previewContext = async signal => {
+            if (!current.current || isDirty(current.current) || busyRef.current || autosaveComposing.current) return;
+            if (mode === 'revise' && !instruction.trim()) return;
             const key = contextKey(), seq = ++contextSequence.current, active = current.current;
-            setContextBusy(true); setError(null);
+            const stillCurrent = () => alive.current && !signal?.aborted && contextSequence.current === seq && contextKey() === key;
+            setContextBusy(true); setContextError(null);
             try {
-              const data = await call('context', { bookId: active.book.id, chapterId: active.chapterId, mode, instruction, selection: picked });
-              if (alive.current && contextSequence.current === seq && contextKey() === key) { setContext({ key, data }); setAdvanced(true); }
-            } catch (e) { if (seq === contextSequence.current) messageError(e); }
-            finally { if (alive.current && seq === contextSequence.current) setContextBusy(false); }
+              const data = await call('context', { bookId: active.book.id, chapterId: active.chapterId, mode, instruction, selection: null }, signal);
+              if (stillCurrent()) setContext({ key, data });
+            } catch (e) { if (stillCurrent() && e?.name !== 'AbortError') setContextError({ key, message: e?.message || t('requestFailed') }); }
+            finally { if (stillCurrent()) setContextBusy(false); }
           };
-          const generate = () => mode === 'polish' ? startPolish(selectionRef.current, instruction.trim() ? instruction : t('polishDefaultDirection')) : withBusy(async () => {
+          const generate = () => withBusy(async () => {
             const active = current.current;
             if (isDirty(active)) throw new Error(t('saveFirst'));
             if (mode === 'revise' && !instruction.trim()) throw new Error(t('reviseRequirement'));
             const modelProblem = modelGenerationProblem(modelPrefsRef.current, catalogRef.current, modelSaveRef.current);
             if (modelProblem) throw new Error(t(modelProblem));
-            const picked = mode === 'polish' ? selectedSource() : null;
-            if (mode === 'polish' && !picked) throw new Error(t('polishFirst'));
+
             let data;
             try {
               reviewRef.current = null;
               invalidateReviewReturn();
-              data = await call('generate', { bookId: active.book.id, chapterId: active.chapterId, expectedRevision: active.book.revision, expectedModelRevision: modelPrefsRef.current.settings.revision, mode, instruction, selection: picked });
+              data = await call('generate', { bookId: active.book.id, chapterId: active.chapterId, expectedRevision: active.book.revision, expectedModelRevision: modelPrefsRef.current.settings.revision, mode, instruction, selection: null });
             } catch (e) {
               if (e.code === 'MODEL_CONFLICT') {
                 // The model revision guard is read-only; keep prose and model choices intact.
@@ -1204,21 +2487,21 @@ window.__ModuleLoader__.load({
               }
               throw e;
             }
-            const next = { id: data.jobId, bookId: active.book.id, chapterId: active.chapterId, status: 'running', mode, sourceRevision: chapterOf(active)?.revision, selection: picked, text: '' };
+            const next = { id: data.jobId, bookId: active.book.id, chapterId: active.chapterId, status: 'running', mode, sourceRevision: chapterOf(active)?.revision, text: '' };
             rememberJob(next);
             if (alive.current && current.current?.book.id === active.book.id) { setJob(next); setPollError(false); setNotice(''); }
           });
           const create = () => transition(() => withBusy(async () => {
             const book = await call('create', { title: newTitle.trim() });
             if (!alive.current) return;
-            epoch.current++; commit(workspace(book)); syncBookList(book); setNewTitle(''); setTab('writing'); setJob(null); assignRecovery(null); setConflict(null); resetSelection(); setNotice(t('created'));
+            epoch.current++; commit(workspace(book)); syncBookList(book); setNewTitle(''); switchTab('writing'); setJob(null); assignRecovery(null); setConflict(null); resetSelection(); setNotice(t('created'));
           }));
           const addChapter = () => transition(() => withBusy(async () => {
             const previousIds = new Set(current.current.book.chapters.map(c => c.id));
             const book = await mutateRaw({ action: 'addChapter', title: newChapter.trim() });
             if (!book) return;
             const added = book.chapters.find(c => !previousIds.has(c.id));
-            epoch.current++; commit(workspace(book, added?.id)); setNewChapter(''); resetSelection(); setTab('writing');
+            epoch.current++; commit(workspace(book, added?.id)); setNewChapter(''); resetSelection(); switchTab('writing');
           }));
           const doImport = file => {
             if (!file) return;
@@ -1228,30 +2511,20 @@ window.__ModuleLoader__.load({
               if (!alive.current) return;
               const book = await call('import', { text });
               if (!alive.current) return;
-              epoch.current++; commit(workspace(book)); syncBookList(book); setJob(null); setTab('writing'); assignRecovery(null); setConflict(null); resetSelection(); setNotice(t('imported'));
+              epoch.current++; commit(workspace(book)); syncBookList(book); setJob(null); switchTab('writing'); assignRecovery(null); setConflict(null); resetSelection(); setNotice(t('imported'));
             }));
           };
           const exportBook = format => withBusy(async () => {
             const data = await call('export', { bookId: current.current.book.id, format });
             if (alive.current) download(data.filename, data.mime, data.text);
           });
-          const beginManagement = () => {
-            if (recoveryRef.current) { setError({ message: t('manageRecovery') }); return; }
-            transition(() => {
-              const active = current.current;
-              if (!active) return;
-              if (conflict || isDirty(active)) { setError({ message: t('manageUnsaved') }); return; }
-              setError(null);
-              setManager({ snapshot: managementSnapshot(active), title: active.book.title, typedTitle: '', uncertain: false });
-            });
-          };
           const renameManagedBook = () => withBusy(async () => {
-            const problem = managementProblem(current.current, manager.snapshot, recoveryRef.current, conflict);
-            if (problem) throw new Error(t(problem));
+            const problem = !bookIsAvailable(manager.snapshot.bookId, deletedBookIds, unavailableBooks.current) ? 'bookMissing' : managementProblem(current.current, manager.snapshot, recoveryRef.current, conflict);
+            if (problem || manager.uncertain || uncertainDeletes.current.has(manager.snapshot.bookId)) throw new Error(t(problem || 'deleteUncertain'));
             const title = manager.title.trim();
             if (!title || title.length > 300 || title === manager.snapshot.title) return;
-            await mutateRaw({ action: 'updateBook', patch: { title } });
-            if (alive.current) { setManager(null); setNotice(t('renamed')); }
+            const saved = await mutateRaw({ action: 'updateBook', patch: { title } });
+            if (alive.current && saved) { setManager({ snapshot: managementSnapshot({ book: saved }), title: saved.title, typedTitle: '', uncertain: false }); setNotice(t('renamed')); }
           });
           // This follow-up has its own failure state: an acknowledged deletion
           // cannot become a "delete failed" error just because list/get failed.
@@ -1261,13 +2534,14 @@ window.__ModuleLoader__.load({
           };
           const deleteManagedBook = () => withBusy(async () => {
             const reviewed = manager.snapshot;
-            const problem = deletionProblem(current.current, reviewed, manager.typedTitle, { recovery: recoveryRef.current, conflict, jobs: [job, ...liveJobs.current] });
-            if (problem || manager.uncertain) throw new Error(t(problem || 'deleteUncertain'));
+            const problem = !bookIsAvailable(reviewed.bookId, deletedBookIds, unavailableBooks.current) ? 'bookMissing' : deletionProblem(current.current, reviewed, manager.typedTitle, { recovery: recoveryRef.current, conflict, jobs: [job, ...liveJobs.current] });
+            if (problem || manager.uncertain || uncertainDeletes.current.has(reviewed.bookId)) throw new Error(t(problem || 'deleteUncertain'));
             let result;
             try {
               result = await call('delete', { bookId: reviewed.bookId, expectedRevision: reviewed.revision, confirmTitle: manager.typedTitle });
             } catch (e) {
               if (['NETWORK', 'RESPONSE'].includes(e.code)) {
+                uncertainDeletes.current.add(reviewed.bookId);
                 if (alive.current) setManager(previous => previous && ({ ...previous, uncertain: true }));
                 throw Object.assign(new Error(t('deleteUncertain')), { code: e.code });
               }
@@ -1275,6 +2549,7 @@ window.__ModuleLoader__.load({
               throw e;
             }
             if (!deletionReceipt(reviewed, result)) {
+              uncertainDeletes.current.add(reviewed.bookId);
               if (alive.current) setManager(previous => previous && ({ ...previous, uncertain: true }));
               throw new Error(t('deleteUnconfirmed'));
             }
@@ -1283,6 +2558,7 @@ window.__ModuleLoader__.load({
             const next = afterBookDeletion(previous, reviewed, result), id = reviewed.bookId;
             // Tombstone before clearing state so late list/get/poll/unmount work
             // cannot revive the deleted book or write its draft back to storage.
+            uncertainDeletes.current.delete(id);
             deletedBookIds.add(id); listSequence.current++;
             memoryDrafts = next.drafts; memoryJobs = next.rememberedJobs;
             let localCleanupPending = false;
@@ -1295,7 +2571,7 @@ window.__ModuleLoader__.load({
             setJob(next.job); assignRecovery(next.recovery);
             if (previous.workspace?.book.id === id) {
               epoch.current++; commit(next.workspace); resetSelection(); setConflict(null); setPollError(false);
-              setNewChapter(''); setInstruction(''); setTab('writing');
+              setNewChapter(''); setInstruction(''); switchTab('writing');
             }
             setManager(null); setConfirm(null); setGuard(null); setNotice('');
             setDeletionNotice({ title: reviewed.title, cleanupPending: result.cleanupPending, localCleanupPending, refreshFailed: false });
@@ -1310,11 +2586,15 @@ window.__ModuleLoader__.load({
             const value = recoveryRef.current, active = current.current;
             if (!value || !active) return;
             if ((value.dirty.chapter && !active.book.chapters.some(c => c.id === value.chapterId)) || (value.dirty.candidate && !active.book.proposals.some(p => p.id === value.candidateId))) { setError({ message: t('recoveryMissing') }); return; }
-            const next = workspace(active.book, value.dirty.chapter || value.dirty.candidate ? value.chapterId : active.chapterId);
-            for (const [kind, fields] of [['chapter', ['chapter', 'baseChapter']], ['settings', ['settings', 'baseSettings']], ['card', ['card', 'baseCard']], ['candidate', ['candidateId', 'candidate', 'baseCandidate']]]) {
-              if (value.dirty[kind]) for (const field of fields) next[field] = value[field];
-            }
+            if (!validAutosaveRecovery(value, active.book.id)) { setError({ message: t('requestFailed') }); return; }
+            const next = restoredAutosaveWorkspace(active, value);
+            autosaveRef.current.restorePendingCard(value.pendingCard && !next.card?.id ? value.pendingCard : null, next.baseCard);
             commit(next); assignRecovery(null); resetSelection(); setNotice(t('recoveryRestored'));
+            if (next.constraintsEditor?.error) {
+              const end = textareaValue(next.constraintsEditor.text).length;
+              constraintsFocusRef.current = { bookId: next.book.id, start: end, end };
+              setConstraintsSourceBook(next.book.id); switchTab('constraints');
+            }
             const fields = conflictingFields(next, active.book);
             setConflict(fields.length ? { book: active.book, fields } : null);
           };
@@ -1343,7 +2623,7 @@ window.__ModuleLoader__.load({
             if (!block || block.dataset.proposalId !== snapshot.proposalId || !rootRef.current?.contains(block)) return null;
             const position = node => ({ top: node?.scrollTop || 0, left: node?.scrollLeft || 0 });
             try { return captureReviewReturn(snapshot, record, { screenY: block.getBoundingClientRect().top, intent: returnIntent.current,
-              root: position(rootRef.current), panel: position(panelRef.current), column: position(columnRef.current) }); } catch { return null; }
+              root: position(contentRef.current), panel: position(panelRef.current), column: position(columnRef.current) }); } catch { return null; }
           };
           const queuePolishViewport = (snapshot, saved, accept, anchor) => {
             const record = saved.proposals.find(p => p.id === snapshot.proposalId), savedChapter = saved.chapters.find(c => c.id === snapshot.chapterId);
@@ -1353,10 +2633,11 @@ window.__ModuleLoader__.load({
             setRestoreEpoch(value => value + 1);
           };
           const applyPolish = (snapshot, accept) => {
+            if (busyRef.current) return;
             // The visible Accept/Reject control is the explicit author decision. Bind the click to
             // exactly what was rendered, never silently save candidate edits first.
             const blocked = visibleReviewProblem(snapshot, reviewRef.current) || polishActionProblem(current.current, snapshot, { recovery: recoveryRef.current, conflict, accept,
-              unavailable: !bookIsAvailable(snapshot?.bookId, deletedBookIds, unavailableBooks.current), busy: busyRef.current || loading || !!manager || !!guard || !!confirm });
+              unavailable: !bookIsAvailable(snapshot?.bookId, deletedBookIds, unavailableBooks.current), busy: loading || !!manager || !!guard || !!confirm });
             if (blocked) { setError({ message: t(blocked) }); return; }
             return withBusy(async () => {
               const problem = visibleReviewProblem(snapshot, reviewRef.current) || polishActionProblem(current.current, snapshot, { recovery: recoveryRef.current, conflict, accept, unavailable: !bookIsAvailable(snapshot?.bookId, deletedBookIds, unavailableBooks.current) });
@@ -1368,9 +2649,10 @@ window.__ModuleLoader__.load({
           };
 
           const applyGenerated = (snapshot, accept) => {
+            if (busyRef.current) return;
             const options = () => ({ recovery: recoveryRef.current, conflict, accept,
               unavailable: !bookIsAvailable(snapshot?.bookId, deletedBookIds, unavailableBooks.current) });
-            const blocked = visibleReviewProblem(snapshot, reviewRef.current) || generatedActionProblem(current.current, snapshot, { ...options(), busy: busyRef.current || loading || !!manager || !!guard || !!confirm });
+            const blocked = visibleReviewProblem(snapshot, reviewRef.current) || generatedActionProblem(current.current, snapshot, { ...options(), busy: loading || !!manager || !!guard || !!confirm });
             if (blocked) { setError({ message: t(blocked) }); return; }
             return withBusy(async () => {
               const problem = visibleReviewProblem(snapshot, reviewRef.current) || generatedActionProblem(current.current, snapshot, options());
@@ -1381,8 +2663,9 @@ window.__ModuleLoader__.load({
           };
 
           const applyRevisionAll = snapshot => {
+            if (busyRef.current) return;
             const options = () => ({ recovery: recoveryRef.current, conflict, unavailable: !bookIsAvailable(snapshot?.bookId, deletedBookIds, unavailableBooks.current) });
-            const blocked = visibleReviewProblem(snapshot, reviewRef.current) || bulkRevisionProblem(current.current, snapshot, { ...options(), busy: busyRef.current || loading || !!manager || !!guard || !!confirm });
+            const blocked = visibleReviewProblem(snapshot, reviewRef.current) || bulkRevisionProblem(current.current, snapshot, { ...options(), busy: loading || !!manager || !!guard || !!confirm });
             if (blocked) { setError({ message: t(blocked) }); return; }
             return withBusy(async () => {
               const problem = visibleReviewProblem(snapshot, reviewRef.current) || bulkRevisionProblem(current.current, snapshot, options());
@@ -1393,10 +2676,11 @@ window.__ModuleLoader__.load({
           };
 
           const applyRevisionHunk = (snapshot, accept) => {
+            if (busyRef.current) return;
             // The inline Accept button is itself explicit author confirmation. Capture the
             // reviewed identity at render time, not from a possibly newer book
             // when clicked, and never launch a second whole-proposal modal.
-            const blocked = visibleReviewProblem(snapshot, reviewRef.current) || revisionActionProblem(current.current, snapshot, { recovery: recoveryRef.current, conflict, busy: busyRef.current || loading || !!manager || !!guard || !!confirm });
+            const blocked = visibleReviewProblem(snapshot, reviewRef.current) || revisionActionProblem(current.current, snapshot, { recovery: recoveryRef.current, conflict, busy: loading || !!manager || !!guard || !!confirm });
             if (blocked) { setError({ message: t(blocked) }); return; }
             return withBusy(async () => {
               const problem = visibleReviewProblem(snapshot, reviewRef.current) || revisionActionProblem(current.current, snapshot, { recovery: recoveryRef.current, conflict });
@@ -1407,7 +2691,7 @@ window.__ModuleLoader__.load({
           };
 
           useEffect(() => {
-            alive.current = true;
+            alive.current = true; autosaveRef.current?.activate();
             let stopped = false;
             (async () => {
               try {
@@ -1419,12 +2703,12 @@ window.__ModuleLoader__.load({
             })();
             const leave = e => {
               persist(current.current);
-              if (isDirty(current.current)) { e.preventDefault(); e.returnValue = ''; }
+              if (autosaveRef.current?.running || isDirty(autosaveRecoveryWorkspace(current.current, autosaveRef.current?.pendingSnapshot))) { e.preventDefault(); e.returnValue = ''; }
             };
             const pagehide = () => persist(current.current);
             window.addEventListener('beforeunload', leave); window.addEventListener('pagehide', pagehide);
             return () => {
-              persist(current.current); stopped = true; alive.current = false; epoch.current++; contextSequence.current++; listSequence.current++;
+              persist(current.current); autosaveRef.current?.dispose(); stopped = true; alive.current = false; epoch.current++; contextSequence.current++; listSequence.current++;
               for (const controller of requests.current) controller.abort();
               for (const [url, timer] of downloads.current) { clearTimeout(timer); URL.revokeObjectURL(url); }
               downloads.current.clear();
@@ -1497,8 +2781,10 @@ window.__ModuleLoader__.load({
             })();
             return () => { controller.abort(); };
           }, [modelPrefs.available, modelPrefs.draft === null, modelPrefs.draft?.provider, modelPrefs.draft?.model, catalogVersion]);
-          useEffect(() => { if (isDirty(w)) persist(w); }, [w]);
-          useEffect(() => { contextSequence.current++; setContext(null); setContextBusy(false); }, [mode, instruction, w?.book.id, w?.book.revision, w?.chapterId]);
+          useEffect(() => { persist(w); }, [w]);
+          useEffect(() => {
+            if (!autosaveBindings.current.paused(false) && autosaveStep(current.current)) autosaveRef.current.schedule();
+          }, [busy, loading, recovery, conflict, guard, confirm, polishRequirements]);
           useEffect(() => {
             if (!job?.id || job.bookId !== w?.book.id || job.status !== 'running') return;
             const controller = new AbortController(), id = job.id, bookId = job.bookId, serial = availabilityEpoch.current;
@@ -1516,7 +2802,7 @@ window.__ModuleLoader__.load({
                   try {
                     const latest = await call('get', { bookId }, controller.signal);
                     if (!stillValid()) return;
-                    if (busyRef.current) pendingLatest.current = latest;
+                    if (busyRef.current || autosaveRef.current?.running) queueLatest(latest);
                     else if (adopt(latest) && value.chapterId === current.current.chapterId && !isDirty(current.current) && !recoveryRef.current && !conflict) {
                       const p = latest.proposals.find(item => item.id === value.proposalId);
                       if (p) commit({ ...current.current, candidateId: p.id, candidate: p.text, baseCandidate: p.text });
@@ -1535,21 +2821,21 @@ window.__ModuleLoader__.load({
           // subsequent durable-book fetch from this same polling iteration.
           }, [job?.id, w?.book.id, pollVersion]);
 
-          const d = dirty(w), anyDirty = isDirty(w), chapter = chapterOf(w), selectedProposal = proposalOf(w);
+          const d = dirty(w), tabDirty = workspaceTabDirty(w), anyDirty = isDirty(w), chapter = chapterOf(w), selectedProposal = proposalOf(w);
           const displayRecord = generatedDisplayRecord(w, selectedProposal, job, { recovery, conflict });
           const awaitingOutcome = displayRecord === job && !!job;
           const proposal = awaitingOutcome ? null : displayRecord;
           // Resolve the previous recovery copy before new typing can overwrite it.
-          const locked = busy || loading || !!recovery || !!manager, running = job?.status === 'running';
-          const manageProblem = manager && managementProblem(w, manager.snapshot, recovery, conflict);
-          const deleteProblem = manager && deletionProblem(w, manager.snapshot, manager.typedTitle, { recovery, conflict, jobs: [job, ...liveJobs.current] });
-          const canPolish = mode !== 'polish' || !!selectedSource();
+          const locked = busy || loading || !!recovery, running = job?.status === 'running';
+          const manageProblem = manager && (!bookIsAvailable(manager.snapshot.bookId, deletedBookIds, unavailableBooks.current) ? 'bookMissing' : managementProblem(w, manager.snapshot, recovery, conflict));
+          const deleteProblem = manager && (manageProblem || deletionProblem(w, manager.snapshot, manager.typedTitle, { recovery, conflict, jobs: [job, ...liveJobs.current] }));
           const modelDraftDirty = !!modelPrefs.settings && !sameModelSelection(modelPrefs.draft, modelPrefs.settings.selection);
           const modelProblem = modelGenerationProblem(modelPrefs, catalog, modelSaving);
           const catalogProblem = modelCatalogProblem(modelPrefs.draft, catalog);
           const modelControlsLocked = locked || modelSaving;
+          const writingTaskModes = ['draft', 'revise'];
+          // Older proposals and the selection popup still have their own modes.
           const modeKeys = { draft: 'modeDraft', continue: 'modeContinue', polish: 'modePolish', summary: 'modeSummary', revise: 'modeRevise' };
-          const modeHint = value => t(({ draft: 'draftHint', continue: 'continueHint', polish: 'polishHint', summary: 'summaryModeHint', revise: 'reviseHint' })[value] || 'aiSafety');
           const activePolishJob = job?.mode === 'polish' && job.bookId === w?.book.id && job.chapterId === w?.chapterId &&
             (job.status === 'running' || job.status === 'completed' && !w?.book.proposals.some(p => p.id === job.proposalId));
           const polishRecord = awaitingOutcome && job.mode !== 'polish' ? null : polishDisplayRecord(w, proposal, job);
@@ -1569,9 +2855,11 @@ window.__ModuleLoader__.load({
           const generatedDecision = generatedPreviewDecision(w, displayRecord, originalReviewKey, { recovery, conflict });
           const generatedKey = generatedDecision.key, generatedVisible = generatedDecision.visible;
           const generatedManuscript = generatedVisible && displayRecord.mode !== 'summary';
+          // A decision must recheck the current review after waiting for autosave.
+          // Its own busy lock disables controls, but does not invalidate that review.
           reviewRef.current = proposal ? { bookId: w.book.id, chapterId: w.chapterId, proposalId: proposal.id,
-            visible: isRevision ? revisionPreviewVisible : isPolish ? polishPreviewVisible : generatedVisible,
-            blocked: running || awaitingOutcome || locked || !!guard || !!confirm } : null;
+            visible: tab === 'writing' && (isRevision ? revisionPreviewVisible : isPolish ? polishPreviewVisible : generatedVisible),
+            blocked: running || awaitingOutcome || loading || !!recovery || !!manager || !!guard || !!confirm || !!polishRequirements } : null;
           const bulkSnapshot = isRevision ? bulkRevisionSnapshot(w, proposal) : isPolish ? polishRenderedSnapshot : generatedActionSnapshot(w, proposal);
           const bulkOpts = { recovery, conflict, busy: locked || running || awaitingOutcome || !!guard || !!confirm };
           const bulkProblem = isRevision ? bulkRevisionProblem(w, bulkSnapshot, bulkOpts) : isPolish ? polishActionProblem(w, bulkSnapshot, bulkOpts) : generatedActionProblem(w, bulkSnapshot, bulkOpts);
@@ -1581,6 +2869,17 @@ window.__ModuleLoader__.load({
           const inlineReviewProblem = proposal?.state === 'ready' && !bulkPreview && !(isRevision && revision && !revision.counts.pending)
             ? recovery ? 'manageRecovery' : anyDirty || conflict ? 'saveFirst' : isRevision && !revision ? 'revisionInvalid' : staleProposal(w, proposal) ? 'stale' : '' : '';
           const requirementMissing = mode === 'revise' && !instruction.trim();
+          const previewKey = contextKey();
+          const previewProblem = loading || busy ? 'loading' : !w ? 'chooseBookHint' : !chapter ? 'noChapters' :
+            !bookIsAvailable(w.book.id, deletedBookIds, unavailableBooks.current) ? 'bookMissing' : recovery ? 'manageRecovery' :
+              anyDirty || conflict ? 'saveFirst' : requirementMissing ? 'reviseRequirement' : '';
+          useEffect(() => {
+            contextSequence.current++; setContext(null); setContextError(null); setContextBusy(false);
+            if (tab !== 'context' || previewProblem) return;
+            const controller = new AbortController();
+            void previewContext(controller.signal);
+            return () => { contextSequence.current++; controller.abort(); };
+          }, [tab, previewKey, previewProblem, contextRefresh]);
           useEffect(() => {
             // Bring a deep selection into view ONCE, never on every stream delta.
             if (polishPreviewVisible) polishBlockRef.current?.scrollIntoView({ block: 'nearest' });
@@ -1598,7 +2897,7 @@ window.__ModuleLoader__.load({
             if (!plan) { pendingPolishViewport.current = null; return; }
             const editor = editorRef.current;
             if (!editor || editor.value !== textareaValue(pending.expectedBody)) return;
-            const ports = { root: rootRef.current, panel: panelRef.current, column: columnRef.current };
+            const ports = { root: contentRef.current, panel: panelRef.current, column: columnRef.current };
             const restorePorts = () => { for (const position of plan.ports) if (ports[position.name]) { ports[position.name].scrollTop = position.top; ports[position.name].scrollLeft = position.left; } };
             restorePorts();
             let measured;
@@ -1616,6 +2915,12 @@ window.__ModuleLoader__.load({
           }, [restoreEpoch, w?.book.id, w?.book.revision, w?.chapterId, w?.candidateId, w?.chapter?.body, displayRecord?.id, polishPreviewVisible, revisionPreviewVisible, generatedManuscript, controlsFolded, busy, loading, tab, manager, guard, confirm, recovery, conflict]);
           const formatDate = value => { try { return new Intl.DateTimeFormat(locale.active === 'zh' ? 'zh-CN' : 'en', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)); } catch { return value || ''; } };
           const button = (label, onClick, props = {}) => h('button', { type: 'button', disabled: locked, onClick, ...props }, label);
+          const toolbarButton = (name, label, onClick, { key, dirty = false, className = '', title = label, ...props } = {}) => h('span', { key, className: 'mx-toolbar-hit', title },
+            button(h(React.Fragment, null,
+              h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.65,
+                strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true, focusable: 'false' }, h('path', { d: toolbarIcons[name] })),
+              dirty && h('span', { className: 'mx-toolbar-dot', 'aria-hidden': true })),
+            onClick, { className: 'mx-toolbar-button ' + className, 'aria-label': dirty ? t('savedTabsDirty', { page: label }) : label, ...props }));
           // Cursor-inspired compact line icons; native buttons retain disabled,
           // keyboard focus, localized accessible names and the exact review target.
           const decisionButton = (accept, label, onClick, props = {}) => button(
@@ -1629,7 +2934,7 @@ window.__ModuleLoader__.load({
           const select = (group, field, values) => h('select', { value: w[group][field], disabled: locked || group === 'chapter' && revisionPreviewVisible || group === 'chapter' && polishPreviewVisible, onChange: e => changeField(group, field, e.target.value) }, values.map(value => h('option', { key: value, value }, t(value))));
           const badge = (text, key) => h('span', { className: 'mx-badge', key }, text);
           const status = (text, tone) => h('span', { className: 'mx-status', 'data-tone': tone }, text);
-          const renderReport = data => data && h('details', { className: 'mx-subpanel', open: true }, h('summary', null, t('contextTitle')),
+          const renderReport = (data, heading = 'contextTitle') => data && h('section', { className: 'mx-subpanel mx-stack' }, h('h3', null, t(heading)),
             h('div', { className: 'mx-stack' },
               h('strong', null, t('budgetUsed', { used: data.report?.usedChars ?? 0, budget: data.report?.budget ?? 0 })), h('p', { className: 'mx-hint' }, t('contextNote')),
               ['warnings', 'included', 'omitted'].map(kind => (data.report?.[kind]?.length ? h('div', { key: kind }, h('h3', null, t(kind)), h('ul', null, data.report[kind].map((item, i) => h('li', { key: i, className: 'mx-hint' }, typeof item === 'string' ? item : item.label + ' · ' + t('chars', { count: item.chars }))))) : null)),
@@ -1716,20 +3021,33 @@ window.__ModuleLoader__.load({
                   item.before ? h('div', { className: 'mx-diff-old mx-revision-text' }, h('span', { className: 'mx-hint' }, t('revisionBefore')), '\n', renderVisibleText(item.before)) : renderOriginalContext(proposal.sourceBody, item));
               })));
           };
-          const renderEditor = () => h('section', { ref: panelRef, className: 'mx-panel mx-stack mx-editor-panel', 'aria-label': t('manuscript') },
-            h('div', { hidden: folded, className: 'mx-row mx-row-between' }, h('h2', null, t('manuscript')), h('div', { className: 'mx-row' }, badge(t('revision', { number: chapter.revision })), status(t('chars', { count: w.chapter.body.length })))),
-            h('div', { hidden: folded }, h(Field, { label: t('chapterTitle') }, input('chapter', 'title', { maxLength: 300 }))),
-            h('div', { className: 'mx-body-slot' }, inlineReviewProblem && h('p', { className: 'mx-hint', role: 'status', style: { flex: 'none' } }, t(inlineReviewProblem)), polishPreviewVisible ? renderPolishPreview() : revisionPreviewVisible ? renderRevisionPreview() : generatedManuscript ? renderGeneratedPreview() : h(Field, { label: t('manuscript') }, textarea('chapter', 'body', {
+          const titleKey = chapter ? w.book.id + ':' + chapter.id : '', titleOpen = !!titleKey && chapterTitleFor === titleKey;
+          const titleId = formId.current + '-chapter-title';
+          const closeTitleEditor = () => { if (!autosaveComposing.current) { setChapterTitleFor(''); chapterTitleButtonRef.current?.focus({ preventScroll: true }); } };
+          const renderChapterPicker = () => h(Field, { label: t('chaptersToggle'), visuallyHidden: true },
+            h('select', { value: w.chapterId, disabled: locked || !chapter, title: w.chapter?.title || t('noChapters'), onChange: e => changeChapter(e.target.value) },
+              !chapter && h('option', { value: '' }, t('noChapters')),
+              w.book.chapters.map((c, i) => h('option', { key: c.id, value: c.id }, (i + 1) + '. ' + (c.id === chapter?.id ? w.chapter?.title || c.title : c.title) + (c.status === 'final' ? ' · ' + t('final') : '')))));
+          const renderTitleControl = () => toolbarButton('title', t(titleOpen ? 'closeTitleEditor' : 'editChapterTitle'), () => {
+            if (titleOpen) closeTitleEditor();
+            else if (!autosaveComposing.current) setChapterTitleFor(titleKey);
+          }, { ref: chapterTitleButtonRef, disabled: locked || polishPreviewVisible || revisionPreviewVisible, 'aria-expanded': titleOpen, 'aria-controls': titleId });
+          const renderEditor = () => {
+            return h('section', { ref: panelRef, className: 'mx-panel mx-stack mx-editor-panel', 'aria-label': t('manuscript') },
+            !folded && h('div', { key: 'chapter-bar', className: 'mx-chapter-bar' },
+              h('div', { className: 'mx-chapter-meta' }, badge(t('revision', { number: chapter.revision })), status(t('chars', { count: w.chapter.body.length })))),
+            h('div', { key: 'chapter-title', id: titleId, hidden: !titleOpen }, titleOpen && h(Field, { label: t('chapterTitle') }, input('chapter', 'title', {
+              autoFocus: true, maxLength: 300, onKeyDown: e => {
+                if (e.key === 'Escape' && !e.isComposing && !e.nativeEvent?.isComposing && !autosaveComposing.current) closeTitleEditor();
+              },
+            }))),
+            h('div', { key: 'manuscript', className: 'mx-body-slot' }, inlineReviewProblem && h('p', { className: 'mx-hint', role: 'status', style: { flex: 'none' } }, t(inlineReviewProblem)), polishPreviewVisible ? renderPolishPreview() : revisionPreviewVisible ? renderRevisionPreview() : generatedManuscript ? renderGeneratedPreview() : h(Field, { label: t('manuscript'), visuallyHidden: true }, textarea('chapter', 'body', {
               ref: editorRef, className: 'mx-editor', rows: 22, spellCheck: true,
               onSelect: captureSelection, onMouseUp: captureSelection, onKeyUp: captureSelection, onBlur: captureSelection,
               onKeyDown: e => { if (e.key === 'Escape') closeSelectionPopup(); if (e.key === 'Tab' && !e.shiftKey && selectionPopup) { const first = popupRef.current?.querySelector('button:not(:disabled)'); if (first) { e.preventDefault(); first.focus({ preventScroll: true }); } } },
                onCompositionStart: () => { composing.current = true; closeSelectionPopup(); }, onCompositionEnd: () => { composing.current = false; captureSelection(); },
-            }))), 
-            h('details', { open: generatedVisible && displayRecord.mode === 'summary' ? true : undefined }, h('summary', null, t('summary')), h('div', { className: 'mx-stack' },
-              generatedVisible && displayRecord.mode === 'summary' && renderGeneratedPreview(),
-              status(t(chapter.summary && chapter.summaryRevision === chapter.revision ? 'summaryCurrent' : 'summaryStale'), chapter.summary && chapter.summaryRevision === chapter.revision ? 'success' : 'warn'),
-              h(Field, { label: t('summary'), hint: t('summaryHint') }, textarea('chapter', 'summary', { rows: 5 })),
-              chapter.summary && chapter.summaryRevision !== chapter.revision && button(t('confirmSummary'), () => confirmMutation(t('confirmSummary'), t('confirmSummaryHint'), { action: 'updateChapter', chapterId: chapter.id, patch: { summary: chapter.summary } }, t('confirmSummary')), { disabled: locked || anyDirty || !!conflict }))));
+            }))));
+          };
           const renderModelPicker = () => {
             const picked = modelPrefs.draft, custom = picked !== null;
             const matchesRoute = catalog.key === modelRouteKey(picked);
@@ -1747,7 +3065,7 @@ window.__ModuleLoader__.load({
                 h(Field, { label: t('modelName') }, h('select', { value: picked.model, disabled: modelControlsLocked || !modelPrefs.available || !picked.provider || catalog.loading || !matchesRoute, onChange: e => changeModelDraft({ provider: picked.provider, model: e.target.value }) }, h('option', { value: '', disabled: true }, t('modelChooseModel')), picked.model && !models.some(m => m.provider === picked.provider && m.id === picked.model) && unavailableOption(picked.model), models.filter(m => m.provider === picked.provider).map(m => h('option', { key: m.id, value: m.id }, m.name || m.id))))),
               custom && efforts.length > 0 && h('div', { className: 'mx-model-row' }, h(Field, { label: t('modelReasoning') }, h('select', { value: picked.reasoningEffort || '', disabled: modelControlsLocked || catalog.loading, onChange: e => changeModelDraft({ provider: picked.provider, model: picked.model, ...(e.target.value ? { reasoningEffort: e.target.value } : {}) }) }, h('option', { value: '' }, t('modelProviderDefault')), picked.reasoningEffort && !efforts.some(e => e.id === picked.reasoningEffort) && unavailableOption(picked.reasoningEffort), efforts.map(e => h('option', { key: e.id, value: e.id }, e.name || e.id))))),
               // Keep an unsupported saved effort visible even when the provider advertises no efforts.
-              custom && picked.reasoningEffort && !efforts.length && h('div', { className: 'mx-stack' }, h('p', { className: 'mx-hint' }, t('modelUnavailableOption', { id: picked.reasoningEffort })), button(t('modelProviderDefault'), () => changeModelDraft({ provider: picked.provider, model: picked.model }), { disabled: modelControlsLocked })), 
+              custom && picked.reasoningEffort && !efforts.length && h('div', { className: 'mx-stack' }, h('p', { className: 'mx-hint' }, t('modelUnavailableOption', { id: picked.reasoningEffort })), button(t('modelProviderDefault'), () => changeModelDraft({ provider: picked.provider, model: picked.model }), { disabled: modelControlsLocked })),
               modelProblem && h('p', { className: 'mx-hint', role: 'status' }, t(modelProblem)),
               catalogProblem && catalogProblem !== modelProblem && h('p', { className: 'mx-hint', role: 'status' }, t(catalogProblem)),
               !modelPrefs.conflict && (model?.provider && model?.model ? h('p', { className: 'mx-hint' }, t(modelPrefs.settings?.selection === null ? 'modelFollowObserved' : 'modelEffective', { model: modelDescription(model) })) : h('p', { className: 'mx-hint' }, t('noModel'))),
@@ -1759,40 +3077,19 @@ window.__ModuleLoader__.load({
           };
           // Allocated normal-flow controls never overlay prose; only the body viewport scrolls.
           const renderAI = () => h(React.Fragment, null,
-            h('section', { hidden: folded, className: 'mx-writing-partner', 'aria-label': t('ai') },
+            h('section', { hidden: folded, id: formId.current + '-writing-task', className: 'mx-writing-partner', 'aria-label': t('ai') },
               h('div', { className: 'mx-partner-row' },
-                h(Field, { label: t('mode') }, h('select', { value: mode, disabled: locked, onChange: e => setMode(e.target.value) }, Object.entries(modeKeys).map(([value, key]) => h('option', { key: value, value }, t(key))))),
-                h(Field, { label: t('instruction') }, h('textarea', { value: instruction, disabled: locked, rows: 2, maxLength: 60000, placeholder: t(mode === 'revise' ? 'revisePlaceholder' : 'instructionPlaceholder'), onChange: e => setInstruction(e.target.value) })),
-                h('div', { className: 'mx-actions' },
-                  button(t('generate'), generate, { className: 'mx-primary', disabled: locked || anyDirty || !!conflict || running || !canPolish || requirementMissing || !!modelProblem || !model?.provider || !model?.model }),
-                  bulkVisible && button(t('approveAll'), () => isRevision ? applyRevisionAll(bulkSnapshot) : isPolish ? applyPolish(bulkSnapshot, true) : applyGenerated(bulkSnapshot, true), { disabled: !!bulkProblem || !bulkPreview, title: bulkProblem ? t(bulkProblem) : t('approveAllHint') }),
-                  button(contextBusy ? t('loading') : t('context'), previewContext, { disabled: locked || anyDirty || !canPolish || requirementMissing || contextBusy }),
-                  running && button(t('cancelJob'), () => withBusy(async () => { const result = await call('cancel', { jobId: job.id }); if (alive.current) { setJob(result); rememberJob(result); setPollVersion(v => v + 1); } }), { className: 'mx-danger' }))),
+                h(Field, { label: t('mode') }, h('select', { value: mode, disabled: locked, onChange: e => { if (writingTaskModes.includes(e.target.value)) setMode(e.target.value); } },
+                  writingTaskModes.map(value => h('option', { key: value, value }, t(modeKeys[value]))))),
+                h(Field, { label: t('instruction') }, h('textarea', { value: instruction, disabled: locked, rows: 2, maxLength: 60000, placeholder: t(mode === 'revise' ? 'revisePlaceholder' : 'instructionPlaceholder'), onChange: e => setInstruction(e.target.value) }))),
               h('div', { className: 'mx-partner-meta' },
-                h('span', { className: 'mx-hint' }, modelDescription(model) || t('noModel')),
-                button(t('advanced'), () => setAdvanced(value => !value), { 'aria-expanded': advanced, 'aria-controls': formId.current + '-advanced' }),
+                h('span', { className: 'mx-hint mx-partner-model', title: modelDescription(model) || t('noModel') }, modelDescription(model) || t('noModel')),
                 proposalsFor(w.book, w.chapterId).length > 0 && h('label', { className: 'mx-result-chooser mx-hint' }, t('results'), h('select', { 'aria-label': t('results'), value: proposal?.id || w.candidateId, disabled: locked || running || awaitingOutcome, onChange: e => chooseCandidate(e.target.value) }, proposalsFor(w.book, w.chapterId).map(p => h('option', { key: p.id, value: p.id }, t(modeKeys[p.mode]) + ' · ' + t(p.state) + ' · ' + formatDate(p.createdAt))))),
-                (running || awaitingOutcome) && job?.mode !== 'polish' && h('span', { className: 'mx-hint', role: 'status' }, t(running ? ['analyzing', 'optimizing'].includes(job.phase) ? job.phase : 'generating' : 'polishAwaitProposal')),
-                job && ['failed', 'cancelled'].includes(job.status) && h(React.Fragment, null,
-                  h('span', { className: 'mx-hint mx-job-terminal', role: job.status === 'failed' ? 'alert' : 'status', title: job.error ? String(job.error) : undefined }, t(job.status), job.error ? ' · ' + String(job.error) : ''),
-                  h('span', { className: 'mx-hint' }, proposal && job.chapterId === w.chapterId ? t('previousResult') : job.chapterId !== w.chapterId ? t('jobOtherChapter') : '')),
-                pollError && h('span', { className: 'mx-hint mx-job-poll', role: 'status' }, t('pollError'), ' ', button(t('retry'), () => { setPollError(false); setPollVersion(v => v + 1); })),
                 anyDirty && h('span', { className: 'mx-hint' }, t('saveFirst')),
-                !canPolish && h('span', { className: 'mx-hint' }, t('polishFirst')),
                 modelProblem && h('span', { className: 'mx-hint', role: 'status' }, t(modelProblem)),
                 mode === 'revise' && requirementMissing && h('span', { className: 'mx-hint' }, t('reviseRequirement')))),
-            advanced && h('div', { hidden: folded, id: formId.current + '-advanced', className: 'mx-partner-advanced mx-stack' },
-              h('p', { className: 'mx-hint' }, t('aiSafety')), mode === 'revise' && h('p', { className: 'mx-hint' }, t('reviseHint')),
-              renderModelPicker(), !anyDirty && context && context.key === contextKey() && renderReport(context.data),
-              proposal?.review?.analysis && h('details', null, h('summary', null, t('revisionAnalysis')), h('div', { className: 'mx-revision-analysis' }, proposal.review.analysis)),
-              proposal?.context && h('details', null, h('summary', null, t('contextTitle')), renderReport({ report: proposal.context })),
-              job && h('div', { className: 'mx-stack', 'aria-label': t('job') },
-                h('p', { className: 'mx-hint' }, t(job.status) + ' · ' + (modelDescription(job.model) ? t('modelJob', { model: modelDescription(job.model) }) : t('modelJobPending'))),
-                job.chapterId !== w.chapterId && h('p', { className: 'mx-hint' }, t('jobOtherChapter')),
-                typeof job.analysis === 'string' && job.analysis && h('details', null, h('summary', null, t('revisionAnalysis')), h('div', { className: 'mx-revision-analysis' }, job.analysis)),
-                pollError && h('p', { className: 'mx-hint', role: 'status' }, t('pollError')),
-                job.error && h('p', { className: 'mx-hint', role: 'status' }, String(job.error)),
-                h('div', { className: 'mx-actions' }, !running && button(t('dismiss'), () => setJob(null)), pollError && button(t('retry'), () => { setPollError(false); setPollVersion(v => v + 1); })))),
+            // Only a saved/streamed summary proposal is shown here, never a second editor.
+            generatedVisible && displayRecord.mode === 'summary' && renderGeneratedPreview(),
             d.candidate && h('div', { className: 'mx-legacy-recovery mx-stack', role: 'status' },
               h('p', { className: 'mx-hint' }, t('legacyDraft')),
               h('details', null, h('summary', null, t('recoveryPreview')), h('pre', null, w.candidate)),
@@ -1804,19 +3101,121 @@ window.__ModuleLoader__.load({
                   if (alive.current) setNotice(t('candidateSaved'));
                 }), { disabled: locked || !!conflict || selectedProposal?.state !== 'ready' || selectedProposal?.mode === 'revise' }),
                 button(t('downloadLocal'), downloadLocal),
-                button(t('discardResultEdits'), () => setConfirm({ title: t('confirmDiscard'), body: t('unsavedHint'), label: t('discardResultEdits'), run: () => { discardScope('candidate'); setConfirm(null); } }), { className: 'mx-danger' }))),
+                button(t('discardResultEdits'), () => setConfirm({ title: t('confirmDiscard'), body: t('unsavedHint'), label: t('discardResultEdits'), run: async () => { if (await discardScope('candidate')) setConfirm(null); } }), { className: 'mx-danger' }))),
             isRevision && proposal.state === 'ready' && h('div', { className: 'mx-actions mx-result-tools' },
-              button(t(revision && !proposal.review.hunks.length ? 'revisionDismissEmpty' : 'revisionRejectRemaining'), () => confirmMutation(t('rejectTitle'), t('revisionRejectHint'), { action: 'rejectProposal', proposalId: proposal.id }, t('reject'), reviewSnapshot(w, { proposalId: proposal.id })), { disabled: locked || anyDirty || !!conflict })),
-            writingLayout && !folded && h('div', { className: 'mx-actions mx-controls-collapse' },
-              button(t('collapseControls'), () => { closeSelectionPopup(); setControlsFolded(true); }, { disabled: false, 'aria-expanded': true, 'aria-controls': formId.current + '-controls' })));
+              button(t(revision && !proposal.review.hunks.length ? 'revisionDismissEmpty' : 'revisionRejectRemaining'), () => confirmMutation(t('rejectTitle'), t('revisionRejectHint'), { action: 'rejectProposal', proposalId: proposal.id }, t('reject'), reviewSnapshot(w, { proposalId: proposal.id })), { disabled: locked || anyDirty || !!conflict })));
+          const constraintsHelpId = formId.current + '-constraints-guide';
+          const constraintsHelpBlocked = !!(error || guard || confirm || manager || polishRequirements || recovery);
+          const constraintsHelpOpen = !constraintsHelpBlocked && tab === 'constraints' && !!w && constraintsHelpBook === w.book.id;
+          const closeConstraintsHelp = () => setConstraintsHelpBook('');
+          useEffect(() => {
+            if (constraintsHelpBook && !constraintsHelpOpen) setConstraintsHelpBook('');
+          }, [constraintsHelpBook, constraintsHelpOpen]);
+          const renderConstraints = () => {
+            const rows = w.settings.writingConstraints, bookId = w.book.id, editor = w.constraintsEditor;
+            const raw = constraintsSourceBook === bookId, enabled = rows.filter(row => row.enabled).length;
+            const modeLabelId = formId.current + '-constraints-mode', hintId = formId.current + '-constraints-hint';
+            const errorId = formId.current + '-markdown-error', editorId = formId.current + '-constraints-editor';
+            const limit = constraintsLimit === bookId;
+            const readOnly = locked || !!confirm || !!guard;
+            const projection = constraintsProjection;
+            const cursor = constraintsCursor?.bookId === bookId ? constraintsCursor : { anchor: 0, head: 0 };
+            const lower = Math.min(cursor.anchor, cursor.head), upper = Math.max(cursor.anchor, cursor.head);
+            const logical = constraintsOffsets;
+            const selectedRule = projection?.rules.find(rule => lower >= logical(rule.lineStart) && upper <= logical(rule.end));
+            const selectedGroup = selectedRule ? projection?.groups.find(group => group.ids.includes(selectedRule.id)) :
+              projection?.groups.find(group => lower >= logical(group.lineStart) && upper <= logical(group.end));
+            const row = selectedRule && rows.find(item => item.id === selectedRule.id);
+            const structuralDisabled = readOnly || !!editor.error;
+            const getDraft = () => current.current?.book.id === bookId ? constraintsHistorySnapshot(current.current) : null;
+            const options = {
+              raw, readOnly, invalid: !!editor.error, label: t('constraintsTextEditor'), placeholder: t('constraintsPlaceholder'),
+              describedBy: hintId + (editor.error || limit ? ' ' + errorId : ''), getDraft,
+              acceptInput: update => acceptConstraintInput(bookId, update),
+              onInput: update => changeConstraintsMarkdown(bookId, update) && getDraft(),
+              onSelection: ({ anchor, head }) => setConstraintsCursor(old => old?.bookId === bookId && old.anchor === anchor && old.head === head ? old : { bookId, anchor, head }),
+              onLimit: () => setConstraintsLimit(bookId), editKey: constraintsDocumentKey,
+              beginComposition: () => { autosaveComposing.current = true; },
+              releaseComposition: () => { autosaveComposing.current = false; autosaveRef.current.schedule(); },
+            };
+            const focusTarget = (next, kind, id, select = false) => {
+              const text = next.constraintsEditor.text;
+              const targets = constraintVisualTargets(text, next.settings.writingConstraints, null);
+              const slice = (kind === 'category' ? targets?.groups : targets?.rules)?.find(target => target.id === id);
+              if (!slice) return;
+              const start = textareaValue(text.slice(0, slice.start)).length;
+              constraintsFocusRef.current = { bookId, start, end: select ? textareaValue(text.slice(0, slice.end)).length : start };
+            };
+            const addConstraint = (category, afterId, kind) => {
+              if (constraintsInputBlocked() || autosaveComposing.current || current.current?.book.id !== bookId) return;
+              const before = new Set(current.current.settings.writingConstraints.map(item => item.id));
+              const next = changeWritingConstraint(bookId, { type: 'add', category, content: t('newConstraint'), afterId });
+              const added = next?.settings.writingConstraints.find(item => !before.has(item.id));
+              if (added) focusTarget(next, kind, added.id, true);
+            };
+            const addCategory = () => {
+              if (current.current?.book.id !== bookId) return;
+              const latestRows = current.current.settings.writingConstraints, categories = new Set(latestRows.map(item => item.category));
+              const base = t('newConstraintCategory'); let category = base, index = 2;
+              while (categories.has(category)) category = base.slice(0, 72) + ' ' + index++;
+              addConstraint(category, latestRows.at(-1)?.id, 'category');
+            };
+            const ruleSummary = value => Array.from(textareaValue(value.content).split('\n')[0]).slice(0, 72).join('');
+            const requestRemove = row => {
+              if (constraintsInputBlocked() || autosaveComposing.current) return;
+              const snapshot = getDraft();
+              if (!snapshot || snapshot.error || !snapshot.rows.some(item => item.id === row.id)) return;
+              setConfirm({ title: t('constraintsDeleteTitle'), body: t('constraintsDeleteHint') + ' ' + row.category + ' — ' + ruleSummary(row), label: t('constraintsRemove'), run: () => {
+                if (!sameConstraintsDraft(snapshot, getDraft())) { setError({ message: t('confirmChanged') }); return; }
+                const latestRows = current.current.settings.writingConstraints, index = latestRows.findIndex(item => item.id === row.id);
+                const fallback = latestRows[index + 1] || latestRows[index - 1];
+                const next = changeWritingConstraint(bookId, { type: 'remove', id: row.id }, { confirmed: true });
+                if (next) {
+                  if (fallback) focusTarget(next, 'rule', fallback.id);
+                  else constraintsFocusRef.current = { bookId, add: true };
+                }
+                setConfirm(null);
+              } });
+            };
+            const toggleRaw = () => {
+              if (!constraintsInputBlocked() && !autosaveComposing.current && current.current?.book.id === bookId) setConstraintsSourceBook(raw ? '' : bookId);
+            };
+            const activeName = row ? ruleSummary(row) : selectedGroup?.category;
+            const targetLabelId = formId.current + '-constraints-current';
+            return h('section', { className: 'mx-panel mx-stack', 'aria-label': t('constraints') },
+              h('h2', null, t('constraints')),
+              h('p', { className: 'mx-hint' }, t('constraintsHint')),
+
+              h('section', { className: 'mx-subpanel mx-constraints-document mx-stack', 'data-mode': raw ? 'source' : 'continuous', 'aria-labelledby': modeLabelId },
+                h('div', { className: 'mx-row mx-row-between' },
+                  h('h3', { id: modeLabelId }, t('constraintsTextEditor')),
+                  h('div', { className: 'mx-actions', role: 'group', 'aria-label': t('constraints') },
+                    button(t('constraintsWriteRules'), () => {
+                      if (!constraintsHelpBlocked && !autosaveComposing.current && current.current?.book.id === bookId) setConstraintsHelpBook(bookId);
+                    }, { ref: constraintsHelpTrigger, disabled: constraintsHelpBlocked, 'aria-haspopup': 'dialog', 'aria-controls': constraintsHelpOpen ? constraintsHelpId : undefined }),
+                    button(t('constraintsAddCategory'), addCategory, { ref: constraintsAddRef, disabled: structuralDisabled || rows.length >= 64 }),
+                    button(t(raw ? 'constraintsHideSource' : 'constraintsShowSource'), toggleRaw, { disabled: readOnly, 'aria-controls': editorId }))),
+                h('p', { className: 'mx-hint', id: hintId }, t(raw ? 'constraintsLiteralHint' : 'constraintsContinuousHint')),
+                limit || editor.error ? h('p', { className: 'mx-hint mx-constraints-error', id: errorId, role: 'status' }, t(limit ? 'constraintsMarkdownTooLong' : editor.error)) : null,
+                h('div', { id: editorId }, h(ConstraintsTextSurface, { key: bookId, bookId, draft: constraintsHistorySnapshot(w), options,
+                  focusRef: constraintsFocusRef, addRef: constraintsAddRef, viewport: constraintsViewport, owner: constraintsEngine })),
+                h('div', { className: 'mx-row mx-row-between mx-constraints-status' },
+                  !editor.error && h('p', { className: 'mx-hint' }, t('constraintsCount', { total: rows.length, enabled, disabled: rows.length - enabled })),
+                  h('div', { className: 'mx-actions mx-constraints-actions', role: 'group', 'aria-label': t('constraintsCurrentActions') },
+                    h('span', { id: targetLabelId, className: 'mx-hint mx-constraints-current', title: activeName }, activeName || t('constraintsPlaceCaret')),
+                    button(t('constraintsAddRule'), () => { if (selectedGroup && sameConstraintsDraft(constraintsHistorySnapshot(w), getDraft())) addConstraint(selectedGroup.category, selectedGroup.ids.at(-1), 'rule'); }, { disabled: structuralDisabled || !selectedGroup || rows.length >= 64, 'aria-describedby': targetLabelId }),
+                    h('label', { className: 'mx-check' }, h('input', { type: 'checkbox', checked: !!row?.enabled, disabled: structuralDisabled || !row, 'aria-describedby': targetLabelId,
+                      onChange: event => { if (row && sameConstraintsDraft(constraintsHistorySnapshot(w), getDraft())) changeWritingConstraint(bookId, { type: 'edit', id: row.id, field: 'enabled', value: event.target.checked }); } }), t('constraintsEnabled')),
+                    button(t('constraintsRemove'), () => { if (row && sameConstraintsDraft(constraintsHistorySnapshot(w), getDraft())) requestRemove(row); }, { className: 'mx-danger', disabled: structuralDisabled || !row, 'aria-describedby': targetLabelId })))));
+          };
           const renderSettings = () => h('section', { className: 'mx-panel mx-stack' }, h('h2', null, t('settings')), h('p', { className: 'mx-hint' }, t('projectHint')),
-            h(Field, { label: t('bookTitle') }, input('settings', 'title', { maxLength: 300 })),
+            h('div', { className: 'mx-row' }, h('strong', null, t('bookTitle') + ': ' + w.book.title), button(t('manageBooks'), () => navigatePage('manage'), { disabled: busy || loading })),
             h(Field, { label: t('premise') }, textarea('settings', 'premise', { rows: 4 })),
             h(Field, { label: t('outline') }, textarea('settings', 'outline', { rows: 10 })),
             h(Field, { label: t('style') }, textarea('settings', 'style', { rows: 5 })),
             h(Field, { label: t('contextBudget'), hint: t('contextNote') }, input('settings', 'contextBudget', { type: 'number', min: 1000, max: 60000, step: 1 })),
             h('details', { className: 'mx-subpanel' }, h('summary', null, t('maintenance')), h('div', { className: 'mx-stack' }, h('p', { className: 'mx-hint' }, t('pruneHint')),
-              h('div', { className: 'mx-actions' }, button(t('exportJson'), () => exportBook('json')), button(t('prune'), () => transition(() => confirmMutation(t('pruneTitle'), t('pruneHint'), { action: 'pruneArchive' }, t('prune'))), { className: 'mx-danger' })))));
+              h('div', { className: 'mx-actions' }, button(t('openBackupTools'), () => navigatePage('tools')), button(t('prune'), () => transition(() => confirmMutation(t('pruneTitle'), t('pruneHint'), { action: 'pruneArchive' }, t('prune'))), { className: 'mx-danger' })))));
           const renderCards = () => h('section', { className: 'mx-stack' },
             h('div', { className: 'mx-row mx-row-between' }, h('h2', null, t('cards')), button(t('newCard'), () => chooseCard(null), { className: 'mx-primary' })), h('p', { className: 'mx-hint' }, t('canonHint')),
             h('div', { className: 'mx-cards' }, h('div', { className: 'mx-stack' }, !w.book.cards.length && h('p', { className: 'mx-hint' }, t('noCards')),
@@ -1831,7 +3230,7 @@ window.__ModuleLoader__.load({
                 h('label', { className: 'mx-check' }, h('input', { type: 'checkbox', checked: w.card.pinned, disabled: locked, onChange: e => changeField('card', 'pinned', e.target.checked) }), t('pin')),
                 h('div', { className: 'mx-form-grid' }, h(Field, { label: t('fromChapter') }, input('card', 'fromChapter', { type: 'number', min: 1, step: 1 })), h(Field, { label: t('toChapter') }, input('card', 'toChapter', { type: 'number', min: 1, step: 1 }))),
                 h(Field, { label: t('tags') }, input('card', 'tags')), h('div', { className: 'mx-actions' }, button(t('save'), saveAll, { className: 'mx-primary', disabled: locked || !anyDirty || !!conflict }), button(t('close'), () => transition(() => commit({ ...current.current, card: null, baseCard: null }), 'card')))))));
-          const renderHistory = () => h('section', { className: 'mx-panel mx-stack' }, h('h2', null, t('history')), h('p', { className: 'mx-hint' }, t('historyHint')),
+          const renderHistory = () => h('section', { className: 'mx-panel mx-stack mx-history-surface' }, h('h2', null, t('history')), h('p', { className: 'mx-hint' }, t('historyHint')),
             !chapter ? h('p', null, t('noChapters')) : !chapter.history.length ? h('p', { className: 'mx-hint' }, t('noHistory')) : chapter.history.slice().reverse().map(item => h('details', { key: item.id, className: 'mx-subpanel' },
               h('summary', null, t('revision', { number: item.revision }) + ' · ' + formatDate(item.createdAt)), h('div', { className: 'mx-stack' }, h('p', { className: 'mx-hint' }, item.reason), h('pre', null, item.body || t('empty')),
                 button(t('restore'), () => transition(() => confirmMutation(t('restoreTitle'), t('restoreHint'), { action: 'restoreChapter', chapterId: chapter.id, historyId: item.id }, t('restore'))), { className: 'mx-danger' })))));
@@ -1854,31 +3253,146 @@ window.__ModuleLoader__.load({
           const renderCreate = () => h('div', { className: 'mx-row' }, h('div', { className: 'mx-grow' }, h(Field, { label: t('newBookTitle') }, h('input', { value: newTitle, maxLength: 300, disabled: locked, onChange: e => setNewTitle(e.target.value) }))), button(t('createBook'), create, { className: 'mx-primary', disabled: locked || !newTitle.trim() }));
           const renderImport = () => h(Field, { label: t('import'), hint: t('importHint') }, h('input', { type: 'file', accept: '.json,application/json', disabled: locked, onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; doImport(file); } }));
 
+          const taskId = formId.current + '-writing-task', pageHeadingId = formId.current + '-page-heading';
+          const renderBookPicker = () => h(Field, { label: t('book'), visuallyHidden: true },
+            h('select', { value: w?.book.id || '', disabled: locked, title: w?.settings.title, onChange: e => selectBook(e.target.value) },
+              h('option', { value: '', disabled: true }, t('chooseBook')),
+              w && !books.some(b => b.id === w.book.id) && h('option', { value: w.book.id, disabled: true }, t('bookUnavailable', { title: w.book.title })),
+              books.map(b => h('option', { key: b.id, value: b.id }, t('bookOption', { title: b.title, count: b.chapterCount, id: b.id.slice(0, 8) })))));
+          const renderUtilityPage = (title, ...children) => h('section', { className: 'mx-panel mx-stack mx-utility-page', 'aria-labelledby': pageHeadingId },
+            h('h2', { id: pageHeadingId, ref: utilityHeadingRef, tabIndex: -1 }, t(title)), ...children);
+          const renderBookTools = () => renderUtilityPage('workspaceTools',
+            h('section', { className: 'mx-subpanel mx-stack' }, h('h3', null, t('createBook')), renderCreate(), renderImport()),
+            w ? h(React.Fragment, null,
+              h('section', { className: 'mx-subpanel mx-stack' }, h('h3', null, t('addChapter')),
+                h('div', { className: 'mx-row' },
+                  h('div', { className: 'mx-grow' }, h(Field, { label: t('newChapterTitle') }, h('input', { ref: addChapterInputRef, value: newChapter, maxLength: 300, disabled: locked, onChange: e => setNewChapter(e.target.value) }))),
+                  button(t('addChapter'), addChapter, { disabled: locked || !newChapter.trim() }))),
+              h('section', { className: 'mx-subpanel mx-stack' }, h('p', { className: 'mx-hint' }, t('exportHint')),
+                h('div', { className: 'mx-actions' }, button(t('exportJson'), () => exportBook('json')), button(t('exportMarkdown'), () => exportBook('markdown')), anyDirty && button(t('downloadLocal'), downloadLocal)))) :
+              h('p', { className: 'mx-hint' }, t('chooseBookHint')));
+          const renderManagementPage = () => renderUtilityPage('manageBooks', h('p', { className: 'mx-hint' }, t('manageBookHint')),
+            !manager ? h('p', { className: 'mx-hint' }, t('chooseBookHint')) : h(React.Fragment, null,
+              h('p', { className: 'mx-hint' }, t('bookIdentity', { id: manager.snapshot.bookId, revision: manager.snapshot.revision })),
+              h('div', null, h('h3', null, t('savedBookTitle')), h('pre', null, manager.snapshot.title)),
+              manageProblem && h('p', { className: 'mx-banner', role: 'status' }, t(manageProblem === 'confirmChanged' ? 'manageStale' : manageProblem)),
+              manager.uncertain && !error && h('p', { className: 'mx-banner', role: 'status' }, t('deleteUncertain')),
+              error && h('p', { className: 'mx-banner mx-error', role: 'alert' }, error.message),
+              h('section', { className: 'mx-subpanel mx-stack', 'aria-label': t('renameBook') },
+                h('h3', null, t('renameBook')),
+                h(Field, { label: t('renameTitle') }, h('input', { value: manager.title, maxLength: 300, disabled: busy || !!manageProblem || manager.uncertain, onChange: e => setManager(previous => ({ ...previous, title: e.target.value })) })),
+                button(t('renameBook'), renameManagedBook, { className: 'mx-primary', disabled: busy || !!manageProblem || manager.uncertain || !manager.title.trim() || manager.title.trim() === manager.snapshot.title })),
+              h('section', { className: 'mx-subpanel mx-stack', 'aria-label': t('deleteBook') },
+                h('h3', null, t('deleteBook')), h('p', null, t('deleteWarning')), h('p', { className: 'mx-hint' }, t('deleteBackup')),
+                button(t('openBackupTools'), () => navigatePage('tools')),
+                h(Field, { label: t('deleteTypeTitle') }, h('input', { value: manager.typedTitle, disabled: busy || !!manageProblem || manager.uncertain, autoComplete: 'off', spellCheck: false, onChange: e => setManager(previous => ({ ...previous, typedTitle: e.target.value })) })),
+                deleteProblem === 'deleteBusy' && h('p', { className: 'mx-banner', role: 'status' }, t('deleteBusy')),
+                button(t('deleteBook'), deleteManagedBook, { className: 'mx-danger', disabled: busy || !!deleteProblem || manager.uncertain }))));
+          const renderContextPage = () => renderUtilityPage('context',
+            h('p', { className: 'mx-hint' }, t('contextPageHint')),
+            chapter && h('div', { className: 'mx-row' }, badge(chapter.title), badge(t(modeKeys[mode]))),
+            mode === 'revise' && h('p', { className: 'mx-hint' }, t('contextStageOne')),
+            previewProblem ? h('div', { className: 'mx-stack' }, h('p', { role: 'status', className: 'mx-hint' }, t(previewProblem)),
+              previewProblem === 'reviseRequirement' && button(t('writing'), () => navigatePage('writing'))) : h(React.Fragment, null,
+              h('div', { className: 'mx-actions' }, button(t('refreshPreview'), () => setContextRefresh(value => value + 1), { disabled: contextBusy })),
+              (contextBusy || !context && !contextError) && h('p', { role: 'status', className: 'mx-hint' }, t('loading')),
+              contextError?.key === previewKey && h('p', { role: 'alert', className: 'mx-banner mx-error' }, contextError.message),
+              context?.key === previewKey && renderReport(context.data)));
+          const renderDetailsPage = () => renderUtilityPage('advanced', renderModelPicker(),
+            h('section', { className: 'mx-subpanel mx-stack', 'aria-label': t('operationDetails') }, h('h3', null, t('operationDetails')),
+              !proposal && !job && h('p', { className: 'mx-hint' }, t('noGenerationDetails')),
+              proposal && h('p', { className: 'mx-hint' }, t(modeKeys[proposal.mode]) + ' · ' + t(proposal.state) + ' · ' + formatDate(proposal.createdAt)),
+              proposal?.review?.analysis && h('details', null, h('summary', null, t('revisionAnalysis')), h('div', { className: 'mx-revision-analysis' }, proposal.review.analysis)),
+              job && h('div', { className: 'mx-stack', 'aria-label': t('job') },
+                h('p', { className: 'mx-hint' }, t(job.status) + ' · ' + (modelDescription(job.model) ? t('modelJob', { model: modelDescription(job.model) }) : t('modelJobPending'))),
+                job.chapterId !== w?.chapterId && h('p', { className: 'mx-hint' }, t('jobOtherChapter')),
+                typeof job.analysis === 'string' && job.analysis && !(job.proposalId === proposal?.id && proposal?.review?.analysis) &&
+                  h('details', null, h('summary', null, t('revisionAnalysis')), h('div', { className: 'mx-revision-analysis' }, job.analysis)),
+                pollError && h('p', { className: 'mx-hint', role: 'status' }, t('pollError')),
+                job.error && h('p', { className: 'mx-hint', role: 'status' }, String(job.error)),
+                h('div', { className: 'mx-actions' }, !running && button(t('dismiss'), () => setJob(null)), pollError && button(t('retry'), () => { setPollError(false); setPollVersion(v => v + 1); })))),
+            proposal?.context && renderReport({ report: proposal.context }, 'generatedContext'));
           const writingLayout = tab === 'writing' && !!chapter && !d.candidate && !recovery && !conflict && !error && !deletionNotice && !storageFailed && cleanupPendingCount === 0;
           const folded = controlsFolded && writingLayout;
-          const renderFoldedCritical = () => h(React.Fragment, null,
-            anyDirty && h('span', { className: 'mx-hint' }, t('unsaved')),
-            anyDirty && button(t('save'), saveAll, { disabled: locked || !!conflict }),
-            anyDirty && button(t('discard'), () => setConfirm({ title: t('confirmDiscard'), body: t('unsavedHint'), label: t('discard'), run: () => { discardScope('all'); setConfirm(null); setError(null); resetSelection(); } })),
-            anyDirty && button(t('downloadLocal'), downloadLocal),
-            bulkVisible && button(t('approveAll'), () => isRevision ? applyRevisionAll(bulkSnapshot) : isPolish ? applyPolish(bulkSnapshot, true) : applyGenerated(bulkSnapshot, true), { disabled: !!bulkProblem || !bulkPreview, title: bulkProblem ? t(bulkProblem) : t('approveAllHint') }),
-            running && button(t('cancelJob'), () => withBusy(async () => { const result = await call('cancel', { jobId: job.id }); if (alive.current) { setJob(result); rememberJob(result); setPollVersion(v => v + 1); } })),
-            job && ['failed', 'cancelled'].includes(job.status) && h('span', { className: 'mx-hint mx-job-terminal', role: job.status === 'failed' ? 'alert' : 'status' }, t(job.status), job.error ? ' · ' + String(job.error) : '', proposal ? ' · ' + t('previousResult') : ''),
-            pollError && h('span', { className: 'mx-hint', role: 'status' }, t('pollError'), button(t('retry'), () => { setPollError(false); setPollVersion(v => v + 1); })));
+          const renderFoldedCritical = () => autosaveCanSave(w, autosaveRef.current) && h(React.Fragment, null,
+            toolbarButton('save', t('saveNow'), saveAll, { disabled: locked || !!conflict }),
+            toolbarButton('discard', t('discard'), () => setConfirm({ title: t('confirmDiscard'), body: t('unsavedHint'), label: t('discard'), run: async () => { if (await discardScope('all')) { setConfirm(null); setError(null); resetSelection(); } } }), { disabled: locked }),
+            toolbarButton('download', t('downloadLocal'), downloadLocal));
+          const writingTaskProblem = anyDirty || conflict ? 'saveFirst' : requirementMissing ? 'reviseRequirement' : '';
+          const generateProblem = writingTaskProblem || modelProblem || (!model?.provider || !model?.model ? 'noModel' : '');
+          const taskTitle = (key, problem) => t(key) + (problem ? ' · ' + t(problem) : '');
+          const renderWritingFeedback = () => {
+            const jobStatus = (running || awaitingOutcome) && job?.mode !== 'polish' ? t(running ? ['analyzing', 'optimizing'].includes(job.phase) ? job.phase : 'generating' : 'polishAwaitProposal') : '';
+            const terminal = !!job && ['failed', 'cancelled'].includes(job.status);
+            const message = pollError ? t('pollError') : terminal ? t(job.status) + (job.error ? ' · ' + String(job.error) : '') : jobStatus ||
+              (!activePolishJob ? notice : '');
+            if (!message) return null;
+            const detail = terminal ? job.chapterId !== w.chapterId ? t('jobOtherChapter') : proposal ? t('previousResult') : '' : '';
+            const label = message + (detail ? ' · ' + detail : '');
+            return h('div', { className: 'mx-topbar-group mx-topbar-feedback' },
+              h('span', { className: 'mx-hint mx-job-terminal', role: terminal && job.status === 'failed' && !pollError ? 'alert' : 'status', title: label }, label),
+              pollError && toolbarButton('refresh', t('retry'), () => { setPollError(false); setPollVersion(v => v + 1); }));
+          };
+          const renderWritingActions = () => h('div', { className: 'mx-topbar-group mx-topbar-actions', role: 'group', 'aria-label': t('writingControls') },
+            !folded && toolbarButton('generate', t('generate'), generate, { className: 'mx-primary', title: taskTitle('generate', generateProblem), disabled: locked || anyDirty || !!conflict || running || requirementMissing || !!modelProblem || !model?.provider || !model?.model }),
+            bulkVisible && toolbarButton('approve', t('approveAll'), () => isRevision ? applyRevisionAll(bulkSnapshot) : isPolish ? applyPolish(bulkSnapshot, true) : applyGenerated(bulkSnapshot, true), { disabled: !!bulkProblem || !bulkPreview, title: t('approveAll') + (bulkProblem ? ' · ' + t(bulkProblem) : '') }),
+            running && toolbarButton('cancel', t('cancelJob'), () => withBusy(async () => { const result = await call('cancel', { jobId: job.id }); if (alive.current) { setJob(result); rememberJob(result); setPollVersion(v => v + 1); } }, false), { className: 'mx-danger' }),
+            folded && renderFoldedCritical(),
+            writingLayout && toolbarButton(folded ? 'expand' : 'focus', t(folded ? 'expandControls' : 'collapseControls'), () => focusWriting(!folded),
+              { ref: foldButtonRef, disabled: false, 'aria-expanded': !folded, 'aria-controls': taskId }));
+          const pageButton = (value, label, dirty = false) => toolbarButton(value, t(label), () => navigatePage(value), {
+            key: value, 'aria-pressed': tab === value, 'aria-controls': formId.current, disabled: busy || loading, dirty,
+          });
+          const renderTopbar = () => h('header', { inert: constraintsHelpOpen || undefined, className: 'mx-topbar' },
+            w && h('nav', { className: 'mx-topbar-group', 'aria-label': t('pages') }, ['writing', 'constraints', 'cards', 'settings', 'history'].map(value =>
+              pageButton(value, value, !!((value === 'writing' && (d.chapter || d.candidate)) || (value === 'cards' && d.card) || (value === 'settings' && tabDirty.settings) || (value === 'constraints' && tabDirty.constraints))))),
+            h('div', { className: 'mx-topbar-group mx-topbar-book', role: 'group', 'aria-label': t('bookTools') }, renderBookPicker(),
+              h('nav', { className: 'mx-book-page-links', 'aria-label': t('workspacePages') },
+                pageButton('tools', 'workspaceTools'), pageButton('manage', 'manageBooks'), pageButton('context', 'context'), pageButton('advanced', 'advanced')),
+              toolbarButton('refresh', t('refresh'), refreshWorkspace)),
+            w && h('div', { className: 'mx-topbar-group mx-topbar-chapter' }, renderChapterPicker(), tab === 'writing' && chapter && renderTitleControl()),
+            tab === 'writing' && chapter && renderWritingActions(),
+            tab === 'writing' && chapter && renderWritingFeedback());
+          const renderCurrentPage = () => {
+            switch (tab) {
+              case 'tools': return renderBookTools();
+              case 'manage': return renderManagementPage();
+              case 'context': return renderContextPage();
+              case 'advanced': return renderDetailsPage();
+            }
+            if (!w) return loading ? null : h('section', { className: 'mx-empty mx-stack' },
+              h('h2', null, t(books.length ? 'chooseBook' : 'emptyTitle')), h('p', { className: 'mx-hint' }, t(books.length ? 'chooseBookHint' : 'emptyHint')),
+              button(t('workspaceTools'), () => navigatePage('tools')));
+            switch (tab) {
+              case 'constraints': return renderConstraints();
+              case 'settings': return renderSettings();
+              case 'cards': return renderCards();
+              case 'history': return renderHistory();
+              default: return chapter ? h('div', { className: 'mx-grid' }, h('div', { ref: columnRef, className: 'mx-writing-column' }, renderAI(), renderEditor())) :
+                h('section', { className: 'mx-panel mx-stack' }, h('p', null, t('noChapters')), button(t('addChapter'), () => {
+                  if (autosaveComposing.current) return;
+                  addChapterFocusPending.current = true; navigatePage('tools');
+                }, { disabled: locked, 'aria-controls': formId.current }));
+            }
+          };
           return h('main', { ref: rootRef, className: 'mx-root' + (writingLayout ? ' mx-root-writing' : '') + (folded ? ' mx-controls-folded' : ''), 'aria-label': t('nav'), 'aria-busy': loading || busy,
             onPointerDownCapture: () => { if (document.activeElement === editorRef.current) captureSelection(); },
-            onKeyDown: e => { if (e.key === 'Escape') closeSelectionPopup(); if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && !e.isComposing && !e.nativeEvent?.isComposing && !composing.current && !guard && !confirm && !manager) { e.preventDefault(); if (isDirty(current.current) && !busyRef.current) saveAll(); } },
+            onCompositionStartCapture: e => { if (!e?.target?.closest?.('.mx-constraints-editor-host')) autosaveComposing.current = true; },
+            // Native form fields and the Markdown engine each release their own
+            // composition. The engine waits for the final native transaction.
+            onCompositionEndCapture: e => {
+              if (!e?.target?.closest?.('.mx-constraints-editor-host')) { autosaveComposing.current = false; autosaveRef.current.schedule(); }
+            },
+            onBlurCapture: e => { if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) void autosaveRef.current.flush(); },
+            onKeyDown: e => { if (e.key === 'Escape') closeSelectionPopup(); if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && !e.isComposing && !e.nativeEvent?.isComposing && !composing.current && !autosaveComposing.current && !guard && !confirm) { e.preventDefault(); if (autosaveCanSave(current.current, autosaveRef.current) && !busyRef.current) saveAll(); } },
           }, h('style', null, CSS),
-          folded && h('div', { className: 'mx-surface-bar', role: 'toolbar', 'aria-label': t('writingControls') },
-            button(t('expandControls'), () => { closeSelectionPopup(); setControlsFolded(false); }, { disabled: false, 'aria-expanded': false, 'aria-controls': formId.current + '-controls' }),
-            folded && renderFoldedCritical()),
-          h('header', { id: formId.current + '-controls', hidden: folded, className: 'mx-header' }, h('div', null, h('h1', null, t('title')), h('p', { className: 'mx-hint' }, t('subtitle'))),
-            w && tab === 'writing' && button(t('chaptersToggle'), () => setChaptersVisible(value => !value), { 'aria-expanded': chaptersVisible, 'aria-controls': formId.current + '-chapters' }),
-            w && anyDirty && h('div', { className: 'mx-stack mx-save-controls' }, h('div', { className: 'mx-actions' }, status(t('unsaved'), 'warn'), button(busy ? t('working') : t('save'), saveAll, { className: 'mx-primary', disabled: locked || !anyDirty || !!conflict }),
-              anyDirty && button(t('discard'), () => setConfirm({ title: t('confirmDiscard'), body: t('unsavedHint'), label: t('discard'), run: () => { discardScope('all'); setConfirm(null); setError(null); resetSelection(); } }), { className: 'mx-danger' })), h('p', { className: 'mx-hint' }, t('saveHint')))),
-          error && h('div', { className: 'mx-banner mx-error mx-stack', role: 'alert' }, h('p', null, error.message), error.code && h('span', { className: 'mx-hint' }, error.code),
-            h('div', { className: 'mx-actions' }, w && button(t('reviewLatest'), inspectConflict), button(t('dismiss'), () => setError(null), { disabled: false }))),
-          notice && !activePolishJob && h('div', { className: 'mx-banner mx-info', role: 'status' }, notice),
+          renderTopbar(),
+          error && !guard && !confirm && !manager && !polishRequirements && h(Modal, { title: t(error.code === 'REVIEW_REQUIRED' ? 'reviewCheckFailed' : error.code === 'CONFLICT' ? 'conflictTitle' : 'requestFailed'), busy, onCancel: () => setError(null), actions: cancelRef => [
+            w && error.code !== 'REVIEW_REQUIRED' && button(t('autosaveRetry'), saveAll, { disabled: locked || !autosaveCanSave(w, autosaveRef.current) || !!conflict }),
+            w && button(t('reviewLatest'), inspectConflict), button(t('dismiss'), () => setError(null), { disabled: false, ref: cancelRef }),
+          ] }, h(React.Fragment, null, h('p', { role: 'alert' }, error.message), (autosaveRef.current?.failed || conflict) && h('p', { className: 'mx-hint' }, t('autosavePaused')), error.code && h('span', { className: 'mx-hint' }, error.code))),
+          h('div', { ref: contentRef, className: 'mx-content-pane', inert: constraintsHelpOpen || undefined },
+          (tab !== 'writing' || !chapter) && notice && !activePolishJob && h('div', { className: 'mx-banner mx-info', role: 'status' }, notice),
           deletionNotice && h('section', { className: 'mx-banner mx-stack', role: deletionNotice.cleanupPending || deletionNotice.localCleanupPending || deletionNotice.refreshFailed ? 'alert' : 'status' },
             h('p', null, t(deletionNotice.cleanupPending ? 'deleteCleanupPending' : 'deleted', { title: deletionNotice.title })),
             deletionNotice.localCleanupPending && h('p', null, t('deleteLocalCleanupPending')),
@@ -1891,22 +3405,15 @@ window.__ModuleLoader__.load({
             h('div', { className: 'mx-actions' }, button(t('recover'), () => transition(restoreRecovery), { className: 'mx-primary', disabled: busy || loading }), button(t('downloadLocal'), downloadLocal, { disabled: busy || loading }), button(t('discardRecovery'), () => setConfirm({ title: t('discardRecovery'), body: t('confirmDiscard'), label: t('discardRecovery'), run: () => { forgetDraft(w.book.id); assignRecovery(null); setConfirm(null); } }), { className: 'mx-danger', disabled: busy || loading }))),
           renderConflict(),
           h('section', { className: 'mx-stack mx-book-workspace' },
-            h('div', { hidden: folded, className: 'mx-row mx-book-row' }, h('div', { className: 'mx-grow' }, h(Field, { label: t('book') }, h('select', { value: w?.book.id || '', disabled: locked, onChange: e => { const id = e.target.value; if (id) transition(() => openBook(id)); } }, h('option', { value: '', disabled: true }, t('chooseBook')), w && !books.some(b => b.id === w.book.id) && h('option', { value: w.book.id, disabled: true }, t('bookUnavailable', { title: w.book.title })), books.map(b => h('option', { key: b.id, value: b.id }, t('bookOption', { title: b.title, count: b.chapterCount, id: b.id.slice(0, 8) })))))),
-              button(t('manageBooks'), beginManagement, { disabled: busy || loading || !w || !!manager, title: t('manageBookHint'), 'aria-haspopup': 'dialog' }),
-              button(t('refresh'), refreshWorkspace)),
             loading && h('p', { role: 'status', className: 'mx-hint' }, t('loading')),
-            !w && !loading && h('section', { className: 'mx-empty mx-stack' }, h('h2', null, t(books.length ? 'chooseBook' : 'emptyTitle')), h('p', { className: 'mx-hint' }, t(books.length ? 'chooseBookHint' : 'emptyHint')), renderCreate(), renderImport()),
-            w && h(React.Fragment, null,
-              h('details', { hidden: folded, className: 'mx-book-tools' }, h('summary', null, t('bookTools')), h('div', { className: 'mx-stack' },
-               h('details', null, h('summary', null, t('createBook')), renderCreate()),
-              h('div', { className: 'mx-row' }, h('div', { className: 'mx-grow' }, h(Field, { label: t('chapter') }, h('select', { value: w.chapterId, disabled: locked || !w.book.chapters.length, onChange: e => changeChapter(e.target.value) }, !w.book.chapters.length && h('option', { value: '' }, t('noChapters')), w.book.chapters.map((c, i) => h('option', { key: c.id, value: c.id }, (i + 1) + '. ' + c.title + (c.status === 'final' ? ' · ' + t('final') : '')))))),
-                h('div', { className: 'mx-grow' }, h(Field, { label: t('newChapterTitle') }, h('input', { value: newChapter, maxLength: 300, disabled: locked, onChange: e => setNewChapter(e.target.value) }))), button(t('addChapter'), addChapter, { disabled: locked || !newChapter.trim() })),
-              h('footer', { className: 'mx-foot mx-stack' }, h('p', { className: 'mx-hint' }, model?.provider && model?.model ? t('model') + ': ' + model.provider + ' / ' + model.model : t('noModel')),
-                h('p', { className: 'mx-hint' }, t('exportHint')), h('div', { className: 'mx-actions' }, button(t('exportJson'), () => exportBook('json')), button(t('exportMarkdown'), () => exportBook('markdown')), anyDirty && button(t('downloadLocal'), downloadLocal)), renderImport()))),
-               h('div', { hidden: folded, className: 'mx-tabs', 'aria-label': t('nav') }, ['writing', 'cards', 'settings', 'history'].map(value => button(t(value) + ((value === 'writing' && (d.chapter || d.candidate)) || (value === 'cards' && d.card) || (value === 'settings' && d.settings) ? ' •' : ''), () => setTab(value), { key: value, 'aria-pressed': tab === value, 'aria-controls': formId.current }))),
-              h('div', { id: formId.current, className: 'mx-writing-host' }, tab === 'writing' ? chapter ? h('div', { className: 'mx-grid', 'data-chapters': chaptersVisible && !folded }, chaptersVisible && !folded && h('nav', { id: formId.current + '-chapters', className: 'mx-chapter-nav', 'aria-label': t('chapter') }, w.book.chapters.map((c, i) => button((i + 1) + '. ' + c.title, () => changeChapter(c.id), { key: c.id, 'aria-pressed': c.id === w.chapterId, title: c.title }))), h('div', { ref: columnRef, className: 'mx-writing-column' }, renderAI(), renderEditor())) : h('section', { className: 'mx-panel' }, h('p', null, t('noChapters'))) : tab === 'settings' ? renderSettings() : tab === 'cards' ? renderCards() : renderHistory()),
-              )),
+            h('div', { id: formId.current, className: 'mx-writing-host' }, renderCurrentPage()))),
           renderSelectionPopup(),
+          constraintsHelpOpen && h(Modal, { id: constraintsHelpId, role: 'dialog', title: t('constraintsHelp'), onCancel: closeConstraintsHelp, returnFocus: constraintsHelpTrigger,
+            actions: closeRef => [button(t('close'), closeConstraintsHelp, { key: 'close', ref: closeRef, disabled: false })] },
+            h('p', null, t('constraintsDraftHint')),
+            h('pre', { className: 'mx-constraint-guide-example' }, t('constraintsGuideExample')),
+            h('p', null, t('constraintsGuideInnerList')),
+            h('p', null, t('constraintsModelHint'))),
            polishRequirements && h(Modal, { title: t('polishCustom'), busy, onCancel: () => setPolishRequirements(null), actions: cancelRef => [
              button(t('cancel'), () => setPolishRequirements(null), { key: 'cancel', ref: cancelRef, disabled: busy }),
              button(t('polishSubmit'), () => startPolish(polishRequirements.snapshot, polishRequirements.text, true), { key: 'submit', className: 'mx-primary', disabled: busy || !!requirementsProblem || !polishRequirements.text.trim() }),
@@ -1916,26 +3423,9 @@ window.__ModuleLoader__.load({
              h(Field, { label: t('polishRequirement') }, h('textarea', { ref: requirementsRef, value: polishRequirements.text, rows: 5, maxLength: 60000, disabled: busy, required: true, onChange: e => setPolishRequirements(previous => previous && ({ ...previous, text: e.target.value })) })),
              requirementsProblem && h('p', { className: 'mx-banner', role: 'alert' }, t(requirementsProblem)),
              error && h('p', { className: 'mx-banner mx-error', role: 'alert' }, error.message))),
-           manager && h(Modal, { title: t('manageBooks'), busy, onCancel: () => setManager(null), actions: cancelRef => [
-            button(t('cancel'), () => setManager(null), { key: 'cancel', ref: cancelRef, disabled: busy }),
-          ] }, h(React.Fragment, null,
-            h('p', { className: 'mx-hint' }, t('bookIdentity', { id: manager.snapshot.bookId, revision: manager.snapshot.revision })),
-            h('div', null, h('h3', null, t('savedBookTitle')), h('pre', null, manager.snapshot.title)),
-            manageProblem && h('p', { className: 'mx-banner', role: 'alert' }, t(manageProblem)),
-            error && h('p', { className: 'mx-banner mx-error', role: 'alert' }, error.message),
-            h('section', { className: 'mx-subpanel mx-stack', 'aria-label': t('renameBook') },
-              h('h3', null, t('renameBook')),
-              h(Field, { label: t('renameTitle') }, h('input', { value: manager.title, maxLength: 300, disabled: busy || !!manageProblem || manager.uncertain, onChange: e => setManager(previous => ({ ...previous, title: e.target.value })) })),
-              button(t('renameBook'), renameManagedBook, { className: 'mx-primary', disabled: busy || !!manageProblem || manager.uncertain || !manager.title.trim() || manager.title.trim() === manager.snapshot.title })),
-            h('section', { className: 'mx-subpanel mx-stack', 'aria-label': t('deleteBook') },
-              h('h3', null, t('deleteBook')), h('p', null, t('deleteWarning')), h('p', { className: 'mx-hint' }, t('deleteBackup')),
-              button(t('exportJson'), () => exportBook('json'), { disabled: busy || !!manageProblem || manager.uncertain }),
-              h(Field, { label: t('deleteTypeTitle') }, h('input', { value: manager.typedTitle, disabled: busy || !!manageProblem || manager.uncertain, autoComplete: 'off', spellCheck: false, onChange: e => setManager(previous => ({ ...previous, typedTitle: e.target.value })) })),
-              deleteProblem === 'deleteBusy' && h('p', { className: 'mx-banner', role: 'status' }, t('deleteBusy')),
-              button(t('deleteBook'), deleteManagedBook, { className: 'mx-danger', disabled: busy || !!deleteProblem || manager.uncertain })))),
           guard && h(Modal, { title: t('unsavedTitle'), busy, onCancel: () => setGuard(null), actions: cancelRef => [
             button(t('stay'), () => setGuard(null), { key: 'stay', ref: cancelRef, disabled: busy }),
-            button(t('discardContinue'), () => { const next = guard; discardScope(next.scope); setGuard(null); next.run(); }, { key: 'discard', className: 'mx-danger', disabled: busy }),
+            button(t('discardContinue'), async () => { const next = guard; if (await discardScope(next.scope)) { setGuard(null); next.run(); } }, { key: 'discard', className: 'mx-danger', disabled: busy }),
             button(t('saveContinue'), async () => { const next = guard; if (await saveAll()) { setGuard(null); next.run(); } }, { key: 'save', className: 'mx-primary', disabled: busy || !!conflict }),
           ] }, h(React.Fragment, null, h('p', null, t('unsavedHint')), error && h('p', { role: 'alert', className: 'mx-banner mx-error' }, error.message))),
           confirm && h(Modal, { title: confirm.title, busy, onCancel: () => setConfirm(null), actions: cancelRef => [

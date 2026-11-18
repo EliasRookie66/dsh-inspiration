@@ -11,22 +11,22 @@ function cleanContract(text) {
   const body = text.slice(text.indexOf('          const renderEditor ='), text.indexOf('          const renderModelPicker ='));
   for (const old of ["t('chapterOutline')", "hint: t('editorHint')", "t('noSelection')", "t('selected'", "t('chapterStatus')", "select('chapter', 'status'"]) assert(!body.includes(old), 'Removed editor chrome: ' + old);
   assert(!/padding-top:\s*64px/.test(text), 'No unconditional oversized macOS top padding');
-  for (const selector of ['mx-header', 'mx-surface-bar']) {
-    const rule = text.match(new RegExp('\\.' + selector + '\\{([^}]+)\\}'))?.[1];
-    assert(rule?.includes('min-height:34px'), selector + ' preserves native-control row height');
-    assert(rule?.includes('padding-inline-start:var(--dsh-frame-leading-clearance,0px)'), selector + ' independently preserves native leading clearance');
-  }
+  const toolbar = text.match(/\.mx-topbar\{([^}]+)\}/)?.[1];
+  assert(toolbar?.includes('min-height:42px'), 'Toolbar preserves native-control row height');
+  assert(toolbar?.includes('var(--dsh-frame-leading-clearance,0px)'), 'Toolbar preserves native leading clearance');
 }
 test('removed plan/hint/selection/status controls are absent while manuscript and review actions stay', () => {
   cleanContract(source);
-  for (const marker of ["label: t('manuscript')", 'onSelect: captureSelection', 'onMouseUp: captureSelection', 'onKeyUp: captureSelection', 'onCompositionStart:', 'renderPolishPreview()', 'renderRevisionPreview()', 'renderGeneratedPreview()', "t('summary')"]) assert(editor.includes(marker), marker);
+  for (const marker of ["label: t('manuscript')", 'onSelect: captureSelection', 'onMouseUp: captureSelection', 'onKeyUp: captureSelection', 'onCompositionStart:', 'renderPolishPreview()', 'renderRevisionPreview()', 'renderGeneratedPreview()']) assert(editor.includes(marker), marker);
+  assert.doesNotMatch(editor, /t\('summary'\)|textarea\('chapter', 'summary'/);
   assert(source.includes('const applyRevisionAll ='));
   assert(source.includes('const applyPolish ='));
 });
 test('header uses host horizontal chrome clearance instead of a full-width blank strip', () => {
   cleanContract(source);
-  assert(source.includes('padding-block:12px'));
-  assert(source.includes("button(t('chaptersToggle')"));
+  assert(source.includes("className: 'mx-topbar'"));
+  assert(source.includes("t('chaptersToggle')"));
+  assert(!editor.includes("t('chaptersToggle')"), 'Chapter navigation uses the pinned shared row');
   assert(!source.includes('transform:translateY'));
 });
 test('hidden outline/status remain in saved context and survive normal manuscript edits', () => {
@@ -47,7 +47,7 @@ test('cleanup contract detects restored obsolete controls, whitespace and missin
     ["const renderEditor = () =>", "const renderEditor = () => /* t('chapterStatus') */"],
     ["const renderEditor = () =>", "const renderEditor = () => /* hint: t('editorHint') */"],
     ['    const CSS = `', "    const CSS = `\nhtml[data-platform='darwin'] .mx-root{padding-top:64px}"],
-    ['padding-inline-start:var(--dsh-frame-leading-clearance,0px)', 'padding-inline-start:0'],
-    ['gap:6px;min-height:34px;padding-inline-start:var(--dsh-frame-leading-clearance,0px)', 'gap:6px;min-height:34px;padding-inline-start:0'],
+    ['var(--dsh-frame-leading-clearance,0px)', '0px'],
+    ['min-height:42px', 'min-height:12px'],
   ]) { assert(source.includes(before)); assert.throws(() => cleanContract(source.replace(before, after))); }
 });
