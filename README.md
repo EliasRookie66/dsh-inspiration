@@ -1,6 +1,6 @@
 # 灵感 inspiration
 
-**当前开发版本：v0.4.10（开发分支，未单独发布 Release）**。作品工具、作品管理、预览上下文和模型／上下文／详情成为共用固定顶栏的独立页面，已保存的作品数据与生成 API 不迁移。GitHub 已发布的 `v0.1.0` 保持不变。
+**当前版本：v0.4.10**。作品工具、作品管理、预览上下文和模型／上下文／详情成为共用固定顶栏的独立页面，已保存的作品数据与生成 API 不迁移。较早的 `v0.1.0` Release 继续保留。
 
 A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precise selection polishing, and author-approved inline edits.
 
@@ -10,16 +10,16 @@ A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precis
 
 ## 安装与兼容性
 
-以下安装入口对应稳定 Release **v0.1.0**，不包含后续新增的写作约束、自动保存和独立工具页面。**v0.4.10** 源码及可运行浏览器产物在 [开发分支 `feat/writing-constraints`](https://github.com/EliasRookie66/dsh-inspiration/tree/feat/writing-constraints)。开发版可经宿主添加本地源码目录，切勿移动或删除正在被链接安装使用的目录。
+安装 **v0.4.10** 请选择 GitHub Release 的预构建包或固定版本标签。源码及可运行浏览器产物也可从 [开发分支 `feat/writing-constraints`](https://github.com/EliasRookie66/dsh-inspiration/tree/feat/writing-constraints) 获取。不要直接将含写作约束的作品数据交给更早的 `v0.1.0` 读取。
 
 - 当前支持声明：DSH **0.2.2-rc.3**，Node.js **>=22**。其他 DSH 版本尚未验证，不建议跳过兼容检查。
 - 在目标 DSH Web／Desktop 的「插件管理 → 添加插件」中使用：
 
   ```text
-  github:EliasRookie66/dsh-inspiration#v0.1.0
+  github:EliasRookie66/dsh-inspiration#v0.4.10
   ```
 
-- 也可从 [v0.1.0 Release](https://github.com/EliasRookie66/dsh-inspiration/releases/tag/v0.1.0) 下载 `ycx-dsh-inspiration-0.1.0.tgz`，通过宿主支持的包安装入口使用。
+- 也可从 [v0.4.10 Release](https://github.com/EliasRookie66/dsh-inspiration/releases/tag/v0.4.10) 下载 [预构建安装包](https://github.com/EliasRookie66/dsh-inspiration/releases/download/v0.4.10/ycx-dsh-inspiration-0.4.10.tgz)，通过宿主支持的包安装入口使用。同一页面提供 `SHA256SUMS` 校验文件。
 - 源码与可运行 JavaScript 均位于仓库根目录，没有安装期构建脚本。是否需要刷新或重新启动，以宿主安装结果为准；先保存当前工作。
 - 本项目尚未发布到 npm；仓库名与包标识 `@ycx/dsh-inspiration` 不必相同。
 
