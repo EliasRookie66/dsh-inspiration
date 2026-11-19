@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { createBook, mutateBook, validateBook, buildContext, makeProposal, cloneImportedBook, exportMarkdown } from './core.js';
+import { createBook, mutateBook, validateBook, buildContext, makeProposal, cloneImportedBook, exportMarkdown, LIMITS } from './core.js';
 import { optimizationContext, optimizationRewriteContext, ANALYSIS_LIMIT } from './optimization.js';
 
-export const VERSION = '0.4.14';
+export const VERSION = '0.4.18';
 const ID = /^[a-zA-Z0-9_-]{1,100}$/;
 export function fail(code, message) { throw Object.assign(new Error(message), { code }); }
 function checkId(id) { if (typeof id !== 'string' || !ID.test(id)) fail('VALIDATION', 'Invalid record id / 无效记录编号'); return id; }
@@ -142,7 +142,12 @@ export class NovelService {
     signal?.throwIfAborted();
     if (this.closed) fail('CLOSED', 'Plugin is closing / 插件正在关闭');
     if (!input || typeof input !== 'object' || Array.isArray(input)) fail('VALIDATION', 'Expected an operation object');
-    const { action } = input;
+    const { action, mode } = input;
+    // Only the authenticated browser dispatch can initiate or preview an outline
+    // generation. A tool payload cannot supply the dispatch authority.
+    if ((action === 'generate' || action === 'context') && mode === 'outline' && user !== true) {
+      fail('AUTHOR_ONLY', 'Chapter outline generation is only available in the author’s writing panel / 章节细纲生成仅供作者在写作面板操作');
+    }
     // Catalog discovery does not take the manuscript write lock. Provider
     // metadata can be slow, and must not delay saves or a job's final commit.
     if (action === 'models') {
@@ -204,8 +209,8 @@ export class NovelService {
           }
           return this.store.commit(mutateBook(book, op));
         }
-        case 'context': return (input.mode === 'revise' ? optimizationContext : buildContext)(await this.store.load(input.bookId), input.chapterId, {
-          mode: input.mode, instruction: input.instruction ?? '', selection: input.selection ?? null,
+        case 'context': return (mode === 'revise' ? optimizationContext : buildContext)(await this.store.load(input.bookId), input.chapterId, {
+          mode, instruction: input.instruction ?? '', selection: input.selection ?? null,
         });
         case 'export': {
           const book = await this.store.load(input.bookId);
@@ -219,21 +224,29 @@ export class NovelService {
           this.requireRevision(book, input.expectedRevision);
           if ([...this.live.values()].some(j => j.status === 'running' && j.bookId === book.id)) fail('BUSY', 'This book already has an active generation / 本作品已有生成任务');
           if ([...this.live.values()].filter(j => j.status === 'running').length >= 3) fail('BUSY', 'At most three concurrent generations / 最多同时生成三项');
-          if (!['draft', 'continue', 'polish', 'summary', 'revise'].includes(input.mode)) fail('VALIDATION', 'Invalid generation mode');
-          if (this.modelPreferences && input.expectedModelRevision !== undefined && input.expectedModelRevision !== this.modelPreferences.snapshot().revision) fail('MODEL_CONFLICT', 'Writing model settings changed; reload the model selection before generating / 写作模型已被其他页面修改，请重新载入模型选择后生成');
-          const source = copy(book), options = { mode: input.mode, instruction: input.instruction || '', selection: input.selection || null };
-          const context = (options.mode === 'revise' ? optimizationContext : buildContext)(source, input.chapterId, options);
+          if (!['draft', 'continue', 'polish', 'summary', 'revise', 'outline'].includes(mode)) fail('VALIDATION', 'Invalid generation mode');
+          // setModel uses this same serial queue, so capture the settings revision
+          // used for CAS before resolving the model, not after metadata awaits.
+          const modelSettingsRevision = this.modelPreferences?.snapshot().revision;
+          if (modelSettingsRevision !== undefined && input.expectedModelRevision !== undefined && input.expectedModelRevision !== modelSettingsRevision) fail('MODEL_CONFLICT', 'Writing model settings changed; reload the model selection before generating / 写作模型已被其他页面修改，请重新载入模型选择后生成');
+          const source = copy(book), { chapterId } = input;
+          const options = mode === 'outline'
+            ? { mode, instruction: input.instruction ?? '', selection: input.selection ?? null }
+            : { mode, instruction: input.instruction || '', selection: input.selection || null };
+          const context = (mode === 'revise' ? optimizationContext : buildContext)(source, chapterId, options);
           // Freeze exact intent immediately after validation, before asynchronous
           // adapter metadata lookup or a caller can mutate its selection object.
           options.selection = copy(options.selection);
-          const chapter = source.chapters.find(c => c.id === input.chapterId);
-          const model = this.modelPreferences ? await this.modelPreferences.resolve(signal) : this.currentModel();
+          const chapter = source.chapters.find(c => c.id === chapterId);
+          const model = this.modelPreferences ? copy(await this.modelPreferences.resolve(signal)) : this.currentModel();
           signal?.throwIfAborted();
           if (!model?.provider || !model?.model) fail('MODEL', 'Choose a model in Inspiration or set a DSH default / 请在灵感中选择模型，或设置 DSH 默认模型');
           const job = {
-            id: randomUUID(), bookId: source.id, chapterId: chapter.id, mode: options.mode, sourceRevision: chapter.revision, ...(options.mode === 'polish' ? { selection: copy(options.selection) } : {}), model: copy(model), ...(this.modelPreferences ? { modelSettingsRevision: this.modelPreferences.snapshot().revision } : {}), status: 'running', text: '', createdAt: now(), updatedAt: now(),
-            ...(options.mode === 'revise' ? { phase: 'analyzing', analysis: '' } : {}),
-            request: { ...options, model, prompt: context.prompt, report: context.report, ...(context.basePrompt ? { basePrompt: context.basePrompt } : {}), sourceRevision: chapter.revision, sourceBody: chapter.body },
+            id: randomUUID(), bookId: source.id, chapterId: chapter.id, mode, sourceRevision: chapter.revision, ...(mode === 'polish' ? { selection: copy(options.selection) } : {}), model: copy(model), ...(modelSettingsRevision !== undefined ? { modelSettingsRevision } : {}), status: 'running', text: '', createdAt: now(), updatedAt: now(),
+            ...(mode === 'revise' ? { phase: 'analyzing', analysis: '' } : {}),
+            request: { ...options, model, prompt: context.prompt, report: context.report, ...(context.basePrompt ? { basePrompt: context.basePrompt } : {}), sourceRevision: chapter.revision, sourceBody: chapter.body,
+              ...(mode === 'outline' ? { sourceBookRevision: source.revision, sourceOutline: chapter.outline } : {}),
+            },
             controller: new AbortController(),
           };
           await this.store.saveJob(job); // Never issue a paid call before durable request provenance.
@@ -267,13 +280,15 @@ export class NovelService {
         await this.store.serial(() => this.store.saveJob(job));
         job.controller.signal.throwIfAborted();
       }
+      const outline = options.mode === 'outline';
+      const outputLimit = outline ? LIMITS.chapterOutline : LIMITS.output;
       const result = await this.runModel({
         model: copy(job.request.model), prompt: finalContext.prompt, signal: job.controller.signal,
-        jobId: options.mode === 'revise' ? job.id + '-revise' : job.id, maxTokens: options.mode === 'summary' ? 2048 : 8192,
-        onText: text => { job.text = text; job.updatedAt = now(); if (text.length > 200000) job.controller.abort(new Error('Output exceeds 200000 characters')); },
+        jobId: options.mode === 'revise' ? job.id + '-revise' : job.id, maxTokens: outline || options.mode === 'summary' ? 2048 : 8192,
+        onText: text => { job.text = text; job.updatedAt = now(); if (text.length > outputLimit) job.controller.abort(new Error(`Output exceeds ${outputLimit} characters`)); },
       });
       job.controller.signal.throwIfAborted();
-      if (!result.text?.trim()) fail('EMPTY', 'The model returned no manuscript text / 模型没有返回正文');
+      if (!result.text?.trim()) fail('EMPTY', outline ? 'The model returned no chapter outline / 模型没有返回章节细纲' : 'The model returned no manuscript text / 模型没有返回正文');
       job.text = result.text;
       if (result.sessionId) job.sessionId = result.sessionId;
       const proposal = makeProposal(source, job.chapterId, options, result.text, finalContext.report, options.mode === 'revise' ? { analysis: job.analysis } : {});

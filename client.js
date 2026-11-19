@@ -44,7 +44,7 @@ window.__ModuleLoader__.load({
     }) : {};
     const isDirty = w => Object.values(dirty(w)).some(Boolean);
     const patchOf = (base, value) => Object.fromEntries(Object.keys(value).filter(k => !equal(base?.[k], value[k])).map(k => [k, value[k]]));
-    const proposalsFor = (b, id) => b.proposals.filter(p => p.chapterId === id).slice().reverse();
+    const proposalsFor = (b, id) => b.proposals.filter(p => p.chapterId === id && p.mode !== 'outline').slice().reverse();
     function workspace(book, chapterId) {
       const chapter = book.chapters.find(c => c.id === chapterId) || book.chapters[0];
       const fields = chapterFields(chapter);
@@ -1490,6 +1490,8 @@ window.__ModuleLoader__.load({
     const modelDescription = value => value?.provider && value?.model ? value.provider + ' / ' + value.model + (value.reasoningEffort ? ' · ' + value.reasoningEffort : '') : '';
 
     const en = {
+      chapterOutline: 'Chapter plan', outlineSaved: 'Chapter outline saved.', outlineHint: 'Drafting this chapter uses the complete saved outline. The outline is a plan, not established canon.', outlineAI: 'Generate outline with AI', outlineInstruction: 'Optional guidance for the outline', outlineGenerating: 'Generating chapter outline…', outlineGenerated: 'Outline proposal ready for review.', outlineCandidate: 'AI outline proposal', outlineCandidateStale: 'The source chapter changed. Generate a new proposal before applying it.', outlineReviewReplace: 'Replace the saved outline with this proposal?', outlineReviewHint: 'Only the chapter outline changes. The manuscript stays unchanged.', outlineUse: 'Use this outline', outlineReject: 'Reject outline proposal', outlineRejected: 'Outline proposal rejected.', outlineRefresh: 'Refresh saved outline and proposals', outlineRefreshNeeded: 'Refresh the saved outline before retrying. The previous change may already be saved.', outlineMissing: 'This chapter is no longer available. The outline cannot be applied to another chapter.', outlineBackWriting: 'Back to writing', outlineBackManagement: 'Back to chapter management',
+      findText: 'Find on this page', findPrevious: 'Previous match (Shift+Enter)', findNext: 'Next match (Enter)', findClose: 'Close find (Escape)', findCount: '{current} / {total}', findNoResults: 'No matches', findNoChapterBody: 'Open the chapter editor to search its manuscript.', findLimited: '{current} / {total} (limited scan)', findHint: 'Search visible content on this page. On the writing page, search only the current chapter.',
       autosaveHint: 'Manual edits save automatically about 1 second after typing stops. Incomplete fields stay local; AI proposals and model preferences still require explicit action.', autosaveShort: 'Autosave · manual edits', saveNow: 'Save now', autosaveRetry: 'Retry saving', autosavePaused: 'Autosave is paused. Your local edits are kept. Use Retry saving to check the saved version before continuing.', autosaveReceipt: 'The save response did not match the requested edit. Your local edits are kept; review the saved version before retrying.', autosaveIncomplete: 'Some manual fields are incomplete or invalid and remain local. Complete them before saving or continuing.',
       constraints: 'Writing constraints', constraintsHint: 'Book-wide reference conditions for every model call: environment, dialogue, expression or any custom novel element. Examples below are placeholders only.',
       constraintsTextEditor: 'Markdown editor', constraintsShowSource: 'Show Markdown syntax', constraintsHideSource: 'Hide Markdown syntax', constraintsWriteRules: 'Writing rules', constraintsAddRule: 'Add rule', constraintsCurrentActions: 'Current rule actions', constraintsPlaceCaret: 'Place the caret in a rule to manage it',
@@ -1538,7 +1540,7 @@ window.__ModuleLoader__.load({
       save: 'Save all changes', saved: 'Saved', unsaved: 'Unsaved changes', saveHint: 'Explicit save · local recovery is not a server backup',
       emptyTitle: 'A long story, written one decision at a time.', emptyHint: 'Create a book, add a chapter, then ask AI for a draft. Edit freely; nothing enters the manuscript until you accept it.',
       bookTitle: 'Book title', chapterTitle: 'Chapter title', newChapterTitle: 'New chapter title', addChapter: 'Add chapter', noChapters: 'Add your first chapter to begin.',
-      chapterOutline: 'Chapter plan (not yet occurred)', manuscript: 'Manuscript', editorHint: 'Write here, or select an exact passage for polishing. Save before asking AI.',
+      manuscript: 'Manuscript', editorHint: 'Write here, or select an exact passage for polishing. Save before asking AI.',
       draft: 'Draft', final: 'Final', chapterStatus: 'Chapter status', chars: '{count} characters', revision: 'Revision {number}',
       selected: '{count} characters selected · offsets {start}–{end}', noSelection: 'Select text in the manuscript for precise polishing.',
       summary: 'Chapter summary',
@@ -1600,6 +1602,8 @@ window.__ModuleLoader__.load({
       dismiss: 'Dismiss', empty: '(empty)', selectionChanged: 'The selected source changed. Select the passage again.',
     };
     const zh = {
+      chapterOutline: '本章计划', outlineSaved: '章级细纲已保存。', outlineHint: '起草本章时会完整、严格地采用已保存的细纲。细纲是创作计划，不是已发生的事实。', outlineAI: 'AI 生成细纲', outlineInstruction: '对细纲的补充要求（可选）', outlineGenerating: '正在生成章级细纲…', outlineGenerated: '细纲候选可供审阅。', outlineCandidate: 'AI 细纲候选', outlineCandidateStale: '生成后本章已有更改，请重新生成细纲后再采纳。', outlineReviewReplace: '用此候选替换已保存的章级细纲？', outlineReviewHint: '仅替换本章细纲，不会修改正文。', outlineUse: '采纳细纲', outlineReject: '拒绝细纲候选', outlineRejected: '已拒绝细纲候选。', outlineRefresh: '刷新已保存的细纲和候选', outlineRefreshNeeded: '上一次变更可能已保存，请刷新核对后再试。', outlineMissing: '目标章节已不可用，细纲不能应用到其他章节。', outlineBackWriting: '返回正文', outlineBackManagement: '返回章节管理',
+      findText: '在当前页查找', findPrevious: '上一处（Shift+Enter）', findNext: '下一处（Enter）', findClose: '关闭查找（Esc）', findCount: '{current} / {total}', findNoResults: '无匹配', findNoChapterBody: '请回到正文编辑区查找本章文本。', findLimited: '{current} / {total}（已达查找上限）', findHint: '查找当前页面的文本，正文页仅查找当前章节。',
       autosaveHint: '手动编辑停笔约 1 秒后自动保存。不完整字段保留在本地；AI 提案及模型偏好仍需明确操作。', autosaveShort: '自动保存 · 手动稿', saveNow: '立即保存', autosaveRetry: '重试保存', autosavePaused: '自动保存已暂停，本地编辑仍保留。请点「重试保存」核对已保存版本后继续。', autosaveReceipt: '保存回执与本次编辑不匹配，本地编辑仍保留。请核对已保存版本后重试。', autosaveIncomplete: '部分手动字段尚未完整或有效，仍保留在本地。请补全后再保存或继续。',
       constraints: '写作约束', constraintsHint: '本书所有模型调用都会参考的条件：可管理环境、对话、神态、表达，以及任何自定义小说要素。下方示例仅为占位提示。',
       constraintsTextEditor: 'Markdown 编辑器', constraintsShowSource: '显示 Markdown 语法', constraintsHideSource: '隐藏 Markdown 语法', constraintsWriteRules: '编写规则', constraintsAddRule: '添加规则', constraintsCurrentActions: '当前规则操作', constraintsPlaceCaret: '将光标放在规则内即可操作',
@@ -1648,7 +1652,7 @@ window.__ModuleLoader__.load({
       save: '保存全部更改', saved: '已保存', unsaved: '有未保存更改', saveHint: '手动保存 · 本地恢复稿不等于服务端备份',
       emptyTitle: '长篇，从一次次由你决定的落笔开始。', emptyHint: '创建作品、添加章节，再让 AI 起草。自由修改；只有你明确接受的提案才会进入正文。',
       bookTitle: '作品名称', chapterTitle: '章节名称', newChapterTitle: '新章节名称', addChapter: '添加章节', noChapters: '添加第一章，开始写作。',
-      chapterOutline: '本章计划（尚未发生）', manuscript: '正文', editorHint: '直接写作，或精确选中一段文字进行润色。请先保存，再交给 AI。',
+      manuscript: '正文', editorHint: '直接写作，或精确选中一段文字进行润色。请先保存，再交给 AI。',
       draft: '草稿', final: '定稿', chapterStatus: '章节状态', chars: '{count} 字符', revision: '修订 {number}',
       selected: '已选 {count} 字符 · 位置 {start}–{end}', noSelection: '在正文中选中文字，即可精确润色。',
       summary: '章节摘要',
@@ -1722,6 +1726,8 @@ window.__ModuleLoader__.load({
     }
 
     const toolbarIcons = Object.freeze({
+      outline: 'M6 5h12M6 10h12M6 15h8M6 20h5',
+      find: 'M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 1 0 0-13M15 15l5 5',
       writing: 'M4 20h16M5 16l1-4L16 2l4 4-10 10-5 1zM14 4l4 4',
       constraints: 'M8 4h12M8 12h12M8 20h12M4 4h.01M4 12h.01M4 20h.01',
       cards: 'M6 7V4h14v13h-3M3 7h14v13H3zM6 11h8m-8 4h5',
@@ -1744,10 +1750,12 @@ window.__ModuleLoader__.load({
     });
 
     const CSS = `
-.mx-root{--mx-ui-size:14px;--mx-field-size:13px;--mx-meta-size:12px;--mx-content-size:16px;--mx-section-size:17px;--mx-subhead-size:14px;display:flex;flex-direction:column;height:100%;min-height:0;min-width:0;overflow:hidden;box-sizing:border-box;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:var(--mx-ui-size);line-height:1.55;container-type:inline-size}
+.mx-root{position:relative;--mx-ui-size:14px;--mx-field-size:13px;--mx-meta-size:12px;--mx-content-size:16px;--mx-section-size:17px;--mx-subhead-size:14px;display:flex;flex-direction:column;height:100%;min-height:0;min-width:0;overflow:hidden;box-sizing:border-box;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:var(--mx-ui-size);line-height:1.55;container-type:inline-size}
 .mx-content-pane{flex:1;min-height:0;min-width:0;overflow:auto;padding:8px clamp(10px,1.6vw,22px) 12px}.mx-content-pane> .mx-book-workspace{gap:6px}
 .mx-root *, .mx-root *::before, .mx-root *::after{box-sizing:border-box}
-.mx-root h2,.mx-root h3,.mx-root p{margin:0}.mx-root h2{font-size:var(--mx-section-size)}.mx-root h3{font-size:var(--mx-subhead-size)}
+.mx-find-anchor{position:relative;flex:none;height:0;z-index:110}.mx-find-bar{-webkit-app-region:no-drag;position:absolute;inset-block-start:5px;inset-inline-end:8px;max-width:calc(100% - 16px);width:fit-content;display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:4px;border:1px solid var(--dsw-alias-border-l2);border-radius:7px;background:var(--dsw-alias-bg-layer-1);box-shadow:0 3px 14px color-mix(in srgb,var(--dsw-alias-label-primary) 15%,transparent)}.mx-root .mx-find-input{width:clamp(5rem,24vw,16rem);min-width:2rem;flex:1 1 7rem;padding:4px 7px;height:30px}.mx-find-count{font-size:var(--mx-meta-size);color:var(--dsw-alias-label-secondary);white-space:nowrap;padding:0 3px}.mx-root .mx-find-button{display:inline-grid;place-items:center;padding:0 5px;min-width:28px;min-height:28px;line-height:1}.mx-find-marks{position:absolute;inset:0;overflow:hidden;z-index:12;pointer-events:none}.mx-find-mark{position:absolute;pointer-events:none;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 26%,transparent);box-shadow:inset 0 0 0 1px var(--dsw-alias-state-warn-primary);border-radius:2px}
+.mx-root .mx-outline-entry{padding:3px 8px;min-height:27px;font-size:var(--mx-meta-size)}.mx-outline-editor{min-height:12rem}.mx-root .mx-outline-preview{font-size:var(--mx-field-size);max-height:30rem}.mx-root h2,.mx-root h3,.mx-root p{margin:0}.mx-root h2{font-size:var(--mx-section-size)}.mx-root h3{font-size:var(--mx-subhead-size)}
+.mx-chapter-add-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px}.mx-root .mx-chapter-add-row>.mx-field>input:not([type=checkbox]),.mx-root .mx-chapter-add-row>button{height:40px;min-height:40px}.mx-chapter-add-row>button{white-space:nowrap}
 .mx-row,.mx-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.mx-stack{display:flex;flex-direction:column;gap:14px;min-width:0}.mx-row-between{justify-content:space-between}.mx-grow{flex:1;min-width:150px}
 .mx-root button,.mx-root input,.mx-root textarea,.mx-root select{font:inherit;color:var(--dsw-alias-label-primary)}
 .mx-root button{border:1px solid var(--dsw-alias-border-l1);border-radius:7px;background:var(--dsw-alias-bg-layer-1);padding:7px 12px;cursor:pointer;min-height:34px;line-height:1.35}.mx-root button:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l2)}
@@ -1760,7 +1768,7 @@ window.__ModuleLoader__.load({
 .mx-toolbar{padding:12px 0}.mx-root button[aria-pressed=true]{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}
 .mx-grid{display:grid;grid-template-columns:minmax(0,1fr);align-items:stretch;min-height:0}.mx-writing-column{min-width:0;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px}.mx-editor{min-height:0;font-size:var(--mx-content-size);line-height:1.9!important;tab-size:2}.mx-writing-partner{position:static;flex:0 0 auto;max-height:42%;overflow:auto;min-width:0;background:var(--dsw-alias-bg-base);border-bottom:1px solid var(--dsw-alias-border-l1);padding:4px 3px 6px}.mx-partner-row{display:grid;grid-template-columns:minmax(9rem,.65fr) minmax(11rem,2fr);gap:5px 8px;align-items:end}.mx-partner-row>.mx-field{gap:2px}.mx-root .mx-partner-row :is(select,textarea){min-height:36px;padding:5px 8px}.mx-root .mx-partner-row textarea{height:36px;max-height:8rem;line-height:1.5}.mx-partner-meta{display:flex;align-items:center;gap:4px 8px;flex-wrap:wrap;margin-top:4px;padding-block:2px}.mx-partner-model{flex:0 1 auto;max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mx-result-chooser{display:flex;align-items:center;gap:6px;max-width:min(100%,22rem);min-width:0}.mx-result-chooser select{min-width:0}.mx-root .mx-result-chooser select{min-height:28px;padding:3px 6px;width:auto;max-width:min(16rem,100%);font-size:var(--mx-meta-size);text-overflow:ellipsis}.mx-legacy-recovery{border-inline-start:2px solid var(--dsw-alias-state-warn-primary);padding-inline-start:10px}
 .mx-status{display:inline-flex;align-items:center;gap:6px;font-size:var(--mx-meta-size);color:var(--dsw-alias-label-secondary)}.mx-status[data-tone=warn]{color:var(--dsw-alias-state-warn-primary)}.mx-status[data-tone=success]{color:var(--dsw-alias-state-success-primary)}
-.mx-banner{border:1px solid var(--dsw-alias-border-l2);border-inline-start:3px solid var(--dsw-alias-state-warn-primary);padding:12px 14px;border-radius:8px;margin-bottom:14px;background:var(--dsw-alias-bg-layer-1);overflow-wrap:anywhere}.mx-banner.mx-error{border-inline-start-color:var(--dsw-alias-state-error-primary)}.mx-banner.mx-info{border-inline-start-color:var(--dsw-alias-brand-primary)}
+.mx-banner{border:1px solid var(--dsw-alias-border-l2);border-inline-start:3px solid var(--dsw-alias-state-warn-primary);padding:12px 14px;border-radius:8px;margin-bottom:14px;background:var(--dsw-alias-bg-layer-1);overflow-wrap:anywhere}.mx-banner.mx-error{border-inline-start-color:var(--dsw-alias-state-error-primary)}.mx-toast-layer{position:absolute;inset-inline:0;inset-block-end:16px;display:flex;justify-content:center;padding-inline:12px;z-index:80;pointer-events:none}.mx-toast{min-width:0;max-width:min(100%,38rem);box-sizing:border-box;padding:6px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:0 3px 12px color-mix(in srgb,var(--dsw-alias-label-primary) 16%,transparent);font-size:var(--mx-field-size);overflow-wrap:anywhere;pointer-events:none;user-select:none}.mx-toast[data-error=true]{border-color:var(--dsw-alias-state-error-primary)}.mx-text-error{color:var(--dsw-alias-state-error-primary)}.mx-toast-text{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .mx-badge{display:inline-block;border:1px solid var(--dsw-alias-border-l1);border-radius:20px;padding:1px 8px;font-size:11px;color:var(--dsw-alias-label-secondary)}.mx-nav{display:flex;gap:6px;overflow:auto;padding:2px 0 10px;margin-bottom:6px}.mx-nav button{flex-shrink:0;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mx-root details>summary{cursor:pointer;font-size:var(--mx-field-size);padding:6px 0}.mx-root details[open]>summary{margin-bottom:9px}.mx-root pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:var(--mx-meta-size);line-height:1.65;max-height:340px;overflow:auto;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;padding:10px}.mx-root ul{padding-inline-start:20px;margin:4px 0}.mx-root li{overflow-wrap:anywhere}
 .mx-compare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.mx-cards-page{min-width:0}.mx-cards{min-width:0}.mx-cards[data-editing=true]{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,2.25fr);gap:12px;align-items:start}.mx-card-list,.mx-card-editor{min-width:0}.mx-root .mx-card-list{margin:0;padding:0;list-style:none}.mx-cards[data-editing=true] .mx-card-list{max-height:68vh;overflow:auto}.mx-card-item+.mx-card-item{border-block-start:1px solid var(--dsw-alias-border-l1)}.mx-root .mx-card-pick{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 10px;text-align:start;width:100%;border:1px solid transparent;background:transparent;padding:5px 8px;min-height:36px}.mx-root .mx-card-pick[aria-current=true]{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}.mx-card-name,.mx-card-excerpt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mx-card-excerpt{font-size:var(--mx-field-size);color:var(--dsw-alias-label-secondary);grid-column:1/-1}.mx-card-labels{font-size:var(--mx-meta-size);color:var(--dsw-alias-label-secondary);max-width:24ch;overflow-wrap:anywhere}.mx-card-editor{display:flex;flex-direction:column;gap:8px;padding:10px}.mx-card-editor .mx-field{gap:2px}.mx-card-editor-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px}.mx-card-editor-head h3{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mx-card-meta-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,2fr);gap:7px;align-items:end}.mx-root .mx-card-editor :is(input:not([type=checkbox]),select,button){min-height:30px}.mx-root .mx-card-editor :is(input:not([type=checkbox]),select){padding:4px 7px}.mx-root .mx-card-editor .mx-card-body{min-height:clamp(11rem,36vh,24rem);resize:vertical}.mx-card-editor>.mx-actions{justify-content:space-between}.mx-card-browser{min-width:0}.mx-card-filter{margin-bottom:6px}.mx-root .mx-card-filter:only-child{margin-bottom:0}.mx-card-category-form{display:flex;flex-wrap:wrap;align-items:end;gap:6px}.mx-card-category-form .mx-field{flex:1 1 10rem}.mx-card-category-form .mx-actions{margin-inline-start:auto}.mx-card-category-error{width:100%;overflow-wrap:anywhere;color:var(--dsw-alias-state-error-primary)}.mx-card-type-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
@@ -1840,6 +1848,24 @@ window.__ModuleLoader__.load({
       } finally { clip.remove(); }
     }
 
+    const outlineTarget = (w, owner) => owner && w?.book.id === owner.bookId && w.chapterId === owner.chapterId ? chapterOf(w) : null;
+    function outlineReviewReceipt(before, after, record, accept) {
+      if (after?.id !== before.id || after.revision !== before.revision + 1 || !Array.isArray(after.chapters) || !Array.isArray(after.proposals)) return false;
+      const old = before.chapters.find(c => c.id === record.chapterId), next = after.chapters?.find(c => c.id === record.chapterId);
+      const saved = after.proposals?.find(p => p.id === record.id);
+      return !!old && !!next && saved?.mode === 'outline' && saved.chapterId === record.chapterId && saved.text === record.text &&
+        saved.state === (accept ? 'accepted' : 'rejected') && next.outline === (accept ? record.text : old.outline) &&
+        next.body === old.body && equal(next.history, old.history);
+    }
+    const outlineProposals = (book, chapterId) => book.proposals.filter(p => p.chapterId === chapterId && p.mode === 'outline').slice().reverse();
+    function outlineReviewProblem(w, owner, record, { conflict = null, recovery = null, accept = false } = {}) {
+      const target = outlineTarget(w, owner);
+      if (!target || !record || record.chapterId !== target.id || record.mode !== 'outline' || record.state !== 'ready' ||
+          !w.book.proposals.some(p => p.id === record.id && JSON.stringify(p) === JSON.stringify(record))) return 'confirmChanged';
+      if (recovery || conflict || isDirty(w)) return 'saveFirst';
+      return accept && staleProposal(w, record) ? 'outlineCandidateStale' : '';
+    }
+
     function Field({ label, hint, children, visuallyHidden = false }) {
       return h('label', { className: 'mx-field' }, h('span', { className: visuallyHidden ? 'mx-visually-hidden' : undefined }, label), children, hint && h('span', { className: 'mx-hint' }, hint));
     }
@@ -1908,6 +1934,95 @@ window.__ModuleLoader__.load({
         h('path', { d: 'M4 4.5h7a3 3 0 0 1 3 3V20a4 4 0 0 0-3-1.5H4zM14 7.5l5-4 2 2-5 4M14 12h6v6.5h-3' }),
         h('path', { d: 'M7 9h4M7 12h4M7 15h3' }));
     }
+    // Each receipt is a distinct event, even if its text repeats.
+    function expireToast(message, setMessage, start = setTimeout, cancel = clearTimeout) {
+      if (!message) return;
+      const timer = start(() => setMessage(current => current === message ? null : current), 1000);
+      return () => cancel(timer);
+    }
+    const isFindControl = node => !!node?.closest?.('.mx-find-bar,[data-mx-find-trigger]');
+    function findShortcut(event) {
+      return !event.defaultPrevented && !event.repeat && !event.isComposing && !event.nativeEvent?.isComposing && event.keyCode !== 229 &&
+        (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key?.toLowerCase() === 'f';
+    }
+    function PageFind({ rootRef, pageRef, inputRef, scope, writing, onClose, t, id }) {
+      const api = __dshInspirationPageFind;
+      const [draft, setDraft] = useState(''), [query, setQuery] = useState(''), [result, setResult] = useState(null), [marks, setMarks] = useState([]);
+      const revealed = useRef(null), sequence = useRef(0);
+      const current = result?.query === query && result?.scope === scope ? result : null;
+      const active = current?.hits[current.index];
+      const move = direction => {
+        if (inputRef.current?.dataset.findComposing) return;
+        const navigation = ++sequence.current;
+        setResult(old => old?.query === query && old?.scope === scope && old.hits.length
+          ? { ...old, index: api.cycleFindIndex(old.index, direction, old.hits.length), navigation } : old);
+      };
+      useLayoutEffect(() => { inputRef.current?.focus({ preventScroll: true }); }, []);
+      useEffect(() => {
+        const page = pageRef.current, view = page?.ownerDocument.defaultView;
+        if (!page || !view || !query) return;
+        let timer;
+        const scan = () => {
+          timer = undefined;
+          const root = writing ? page.querySelector('.mx-body-slot textarea.mx-editor') : page; // Never search an AI preview in place of the manuscript.
+          const { hits, limited } = root ? api.scanPageFind(root, query) : { hits: [], limited: false };
+          const navigation = ++sequence.current;
+          setResult(old => {
+            const same = old?.query === query && old?.scope === scope;
+            return { query, scope, hits, limited, unavailable: writing && !root, index: hits.length ? Math.min(same ? Math.max(old.index, 0) : 0, hits.length - 1) : -1,
+              navigation: same && old.hits.length ? old.navigation : navigation };
+          });
+        };
+        const schedule = () => { if (timer === undefined) timer = view.setTimeout(scan, 50); };
+        const observer = new view.MutationObserver(schedule);
+        observer.observe(page, { subtree: true, childList: true, characterData: true, attributes: true,
+          attributeFilter: ['open', 'hidden', 'class', 'style', 'inert', 'aria-hidden', 'value', 'data-editing'] });
+        page.addEventListener('input', schedule, true);
+        page.addEventListener('toggle', schedule, true);
+        schedule();
+        return () => { observer.disconnect(); page.removeEventListener('input', schedule, true); page.removeEventListener('toggle', schedule, true); view.clearTimeout(timer); };
+      }, [query, scope, writing]);
+      useLayoutEffect(() => {
+        const root = rootRef.current, view = root?.ownerDocument.defaultView;
+        if (!root || !active || !view) { setMarks(previous => previous.length ? [] : previous); return; }
+        let frame = null, local;
+        const measure = () => { local = active.kind === 'field' ? api.findFieldRects(active, root) : null; };
+        const paint = () => {
+          frame = null;
+          const next = api.paintFindHit(active, root, local);
+          setMarks(previous => equal(previous, next) ? previous : next);
+        };
+        const schedule = () => { if (frame === null) frame = view.requestAnimationFrame(paint); };
+        const resize = () => { measure(); schedule(); };
+        measure();
+        if (revealed.current !== current.navigation) { revealed.current = current.navigation; api.revealFindHit(active, root, local); }
+        paint();
+        root.addEventListener('scroll', schedule, true);
+        view.addEventListener('resize', resize);
+        const observer = view.ResizeObserver ? new view.ResizeObserver(resize) : null;
+        observer?.observe(root); if (active.node !== root) observer?.observe(active.node);
+        return () => { observer?.disconnect(); root.removeEventListener('scroll', schedule, true); view.removeEventListener('resize', resize); if (frame !== null) view.cancelAnimationFrame(frame); };
+      }, [active, current?.navigation]);
+      const count = current && (current.unavailable ? t('findNoChapterBody') : current.limited || current.hits.length
+        ? t(current.limited ? 'findLimited' : 'findCount', { current: current.index + 1, total: current.hits.length }) : t('findNoResults'));
+      const control = (label, path, onClick, disabled = false) => h('button', { type: 'button', className: 'mx-find-button',
+        title: t(label), 'aria-label': t(label), onClick, disabled }, h('svg', { width: 14, height: 14, viewBox: '0 0 24 24',
+          fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true, focusable: 'false' }, h('path', { d: path })));
+      return h(React.Fragment, null,
+        h('div', { className: 'mx-find-marks', 'aria-hidden': true }, marks.map((style, index) => h('span', { key: index, className: 'mx-find-mark', style }))),
+        h('div', { className: 'mx-find-anchor' }, h('div', { className: 'mx-find-bar', id, role: 'search', 'aria-label': t('findText') },
+          h('input', { type: 'search', className: 'mx-find-input', ref: inputRef, value: draft, maxLength: api.PAGE_FIND_MAX_QUERY_LENGTH,
+            placeholder: t('findText'), 'aria-label': t('findText'), title: t('findHint'), autoComplete: 'off', spellCheck: false,
+            onCompositionStart: event => { event.currentTarget.dataset.findComposing = 'true'; },
+            onCompositionEnd: event => { delete event.currentTarget.dataset.findComposing; setDraft(event.target.value); setQuery(event.target.value); },
+            onChange: event => { setDraft(event.target.value); if (!event.currentTarget.dataset.findComposing) setQuery(event.target.value); }, onKeyDown: event => {
+              if (event.key === 'Enter' && !event.currentTarget.dataset.findComposing && !event.isComposing && !event.nativeEvent?.isComposing && event.keyCode !== 229) { event.preventDefault(); event.stopPropagation(); move(event.shiftKey ? -1 : 1); }
+            } }),
+          h('span', { className: 'mx-find-count', 'aria-live': 'polite', 'aria-atomic': true }, count),
+          control('findPrevious', 'M5 15l7-7 7 7', () => move(-1), !active),
+          control('findNext', 'M5 9l7 7 7-7', () => move(1), !active),
+          control('findClose', 'M6 6l12 12M18 6 6 18', onClose))));
+    }
     function Modal({ title, children, actions, onCancel, busy, role = 'alertdialog', id, returnFocus }) {
       const ref = useRef(null), cancelRef = useRef(null);
       useEffect(() => {
@@ -1956,7 +2071,10 @@ window.__ModuleLoader__.load({
           const commitModelPrefs = next => { modelPrefsRef.current = next; setModelPrefs(next); };
           const commitCatalog = next => { catalogRef.current = next; setCatalog(next); };
           const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false);
-          const [error, setError] = useState(null), [notice, setNotice] = useState('');
+          const [error, setError] = useState(null), [notice, setToastNotice] = useState(null);
+          const setNotice = useCallback(message => setToastNotice({ message }), []);
+          const [findOpen, setFindOpen] = useState(false);
+          const findPageRef = useRef(null), findInputRef = useRef(null), findButtonRef = useRef(null), findReturnFocus = useRef(null);
           const [tab, setTab] = useState('writing'), [newTitle, setNewTitle] = useState(''), [newChapter, setNewChapter] = useState('');
           const [cardFilter, setCardFilter] = useState(null), [categoryForm, setCategoryForm] = useState(null);
           const categoryNameRef = useRef(null), categoryFilterRef = useRef(null), categoryAddRef = useRef(null), categoryFocusReturn = useRef(false);
@@ -1978,6 +2096,17 @@ window.__ModuleLoader__.load({
           }, [tab, busy, loading, w?.book.id, w?.card?.id, !!w?.card]);
           const [mode, setMode] = useState('draft'), [instruction, setInstruction] = useState('');
           const [chapterTitleFor, setChapterTitleFor] = useState('');
+          const [outlineOwner, setOutlineOwner] = useState(null), [outlineInstruction, setOutlineInstruction] = useState(''), [outlineSelection, setOutlineSelection] = useState('');
+          const [outlineNeedsRefresh, setOutlineNeedsRefresh] = useState('');
+          const outlineFocusReturn = useRef(null);
+          useLayoutEffect(() => {
+            const owner = outlineFocusReturn.current, root = rootRef.current;
+            if (!owner || owner.from !== tab) return;
+            outlineFocusReturn.current = null;
+            if (owner.bookId !== w?.book.id || !root) return;
+            const trigger = [...root.querySelectorAll('[data-mx-outline-chapter]')].find(node => node.dataset.mxOutlineChapter === owner.chapterId && node.getClientRects().length);
+            (trigger || (tab === 'writing' ? editorRef.current : chapterManagementHeading.current))?.focus({ preventScroll: true });
+          }, [tab, w?.book.id]);
           const toolPages = ['tools', 'manage', 'context', 'advanced'];
           const chapterTitleButtonRef = useRef(null), workspaceNavigation = useRef(0), foldButtonRef = useRef(null), foldFocusPending = useRef(false);
           const addChapterInputRef = useRef(null), addChapterFocusPending = useRef(false);
@@ -2036,6 +2165,10 @@ window.__ModuleLoader__.load({
           const [constraintsHelpBook, setConstraintsHelpBook] = useState('');
           const constraintsHelpTrigger = useRef(null);
           const [manager, setManager] = useState(null), [deletionNotice, setDeletionNotice] = useState(null);
+          const toastError = guard || confirm || polishRequirements || constraintsHelpBook ? null : error;
+          const toast = toastError || notice;
+          useEffect(() => expireToast(notice, setToastNotice), [notice]);
+          useEffect(() => expireToast(toastError, setError), [toastError]);
           const uncertainDeletes = useRef(new Set()), uncertainChapterWrites = useRef(new Set());
           const [cleanupPendingCount, setCleanupPendingCount] = useState(0);
           const [constraintsSourceBook, setConstraintsSourceBook] = useState('');
@@ -2205,7 +2338,7 @@ window.__ModuleLoader__.load({
                 unavailableBooks.current = missing.unavailable; pendingLatest.current = missing.pendingLatest; epoch.current++; availabilityEpoch.current++;
                 persist(active); setError({ code: 'NOT_FOUND', message: t('bookMissing') }); return;
               }
-              const page = toolPages.includes(tab) ? tab : 'writing';
+              const page = toolPages.includes(tab) || tab === 'outline' ? tab : 'writing';
               if (active) await openBook(active.book.id, active.chapterId, page, true);
               else if (data.books.length) await openBook(data.books[0].id, undefined, page, true);
             }), 'all', stillRequested);
@@ -2220,13 +2353,13 @@ window.__ModuleLoader__.load({
             if (!bookIsAvailable(bookId, deletedBookIds, unavailableBooks.current)) return false;
             autosaveRef.current?.cancel(); autosaveRef.current?.resetFailure();
             const serial = ++epoch.current;
-            setLoading(true); setError(null); setNotice(''); setConflict(null); pendingLatest.current = null; resetSelection();
+            setLoading(true); setError(null); setConflict(null); pendingLatest.current = null; resetSelection();
             try {
               const book = await call('get', { bookId });
               if (!alive.current || epoch.current !== serial || !bookIsAvailable(book.id, deletedBookIds, unavailableBooks.current)) return false;
               commit(workspace(book, preferredChapter)); syncBookList(book); assignRecovery(readRecovery(book.id));
               if (reconcileDelete) { uncertainDeletes.current.delete(book.id); uncertainChapterWrites.current.delete(book.id); }
-              const remembered = readJob(book.id);
+              const remembered = readJob(book.id) || liveJobs.current.find(item => item.bookId === book.id && item.mode === 'outline');
               setJob(remembered && book.chapters.some(c => c.id === remembered.chapterId) ? remembered : null);
               setPollError(false); setPollVersion(value => value + 1); switchTab(page);
               return true;
@@ -2354,7 +2487,7 @@ window.__ModuleLoader__.load({
               const active = current.current, d = dirty(active);
               if (d.chapter || d.settings || d.card) throw new Error(t('autosaveIncomplete'));
               if (d.candidate) await mutateRaw({ action: 'updateProposal', proposalId: active.candidateId, text: active.candidate }, 'candidate');
-              if (alive.current) { forgetDraft(current.current.book.id); assignRecovery(null); setNotice(''); }
+              if (alive.current) { forgetDraft(current.current.book.id); assignRecovery(null); }
             }, true, true);
             if (!ok && current.current) persist(current.current);
             return ok;
@@ -2413,10 +2546,92 @@ window.__ModuleLoader__.load({
             return transition(() => {
               const active = current.current;
               if (!stillRequested() || !active || active.chapterId === chapterId || !active.book.chapters.some(chapter => chapter.id === chapterId)) return;
-              epoch.current++; commit(workspace(active.book, chapterId)); resetSelection(); setError(null); setNotice(''); setConflict(null); switchTab(page);
+              epoch.current++; commit(workspace(active.book, chapterId)); resetSelection(); setError(null); setConflict(null); switchTab(page);
             }, 'all', stillRequested);
           };
           const openManagedChapter = id => current.current?.chapterId === id ? navigatePage('writing') : changeChapter(id, 'writing');
+          const openChapterOutline = (chapterId, from) => {
+            if (busyRef.current || loading || guard || confirm || polishRequirements || autosaveComposing.current) return;
+            const stillRequested = navigationIntent();
+            const open = () => {
+              const active = current.current;
+              if (!stillRequested() || !active?.book.chapters.some(c => c.id === chapterId) || recoveryRef.current && active.chapterId !== chapterId) return;
+              if (active.chapterId !== chapterId) {
+                epoch.current++; commit(workspace(active.book, chapterId)); resetSelection(); setError(null); setConflict(null);
+              }
+              setOutlineOwner({ bookId: active.book.id, chapterId, from });
+              setOutlineInstruction(''); setOutlineSelection(''); utilityFocusPending.current = 'outline'; switchTab('outline');
+            };
+            if (current.current?.chapterId === chapterId) open();
+            else return transition(open, 'all', stillRequested);
+          };
+          const refreshChapterOutline = () => withBusy(async () => {
+            const active = current.current, serial = epoch.current;
+            if (!outlineTarget(active, outlineOwner)) return;
+            const latest = await call('get', { bookId: active.book.id });
+            if (!alive.current || epoch.current !== serial || latest?.id !== active.book.id) return;
+            if (!adopt(latest)) throw new Error(t('conflictTitle'));
+            const data = await refreshList();
+            if (!data || !alive.current || epoch.current !== serial || current.current?.book.id !== active.book.id) return;
+            const runningJob = data.activeJobs.find(item => item.bookId === active.book.id);
+            if (runningJob?.mode === 'outline') { rememberJob(runningJob); setJob(runningJob); setPollError(false); setPollVersion(value => value + 1); }
+            setOutlineNeedsRefresh('');
+          }, true, true);
+          const startChapterOutline = () => withBusy(async () => {
+            const active = current.current, target = outlineTarget(active, outlineOwner), serial = epoch.current;
+            if (tab !== 'outline' || !target || !bookIsAvailable(active.book.id, deletedBookIds, unavailableBooks.current)) throw new Error(t('outlineMissing'));
+            if (outlineNeedsRefresh === active.book.id) throw new Error(t('outlineRefreshNeeded'));
+            if (recoveryRef.current || conflict || isDirty(active)) throw new Error(t('saveFirst'));
+            if ([job, ...liveJobs.current].some(item => item?.bookId === active.book.id && item.status === 'running')) throw new Error(t('chapterStructureBusy'));
+            const modelProblem = modelGenerationProblem(modelPrefsRef.current, catalogRef.current, modelSaveRef.current);
+            if (modelProblem) throw new Error(t(modelProblem));
+            let data;
+            try {
+              data = await call('generate', { bookId: active.book.id, chapterId: target.id, expectedRevision: active.book.revision,
+                expectedModelRevision: modelPrefsRef.current.settings.revision, mode: 'outline', instruction: outlineInstruction, selection: null });
+            } catch (error) {
+              if (error.code === 'MODEL_CONFLICT') { commitModelPrefs({ ...modelPrefsRef.current, conflict: true }); throw Object.assign(new Error(t('modelSettingsConflict')), { code: error.code }); }
+              if (['NETWORK', 'RESPONSE', 'STORAGE', 'INTERNAL'].includes(error.code) && alive.current) setOutlineNeedsRefresh(active.book.id);
+              throw error;
+            }
+            if (!alive.current || epoch.current !== serial || !outlineTarget(current.current, outlineOwner)) return;
+            if (typeof data?.jobId !== 'string' || !data.jobId) { setOutlineNeedsRefresh(active.book.id); throw new Error(t('outlineRefreshNeeded')); }
+            const next = { id: data.jobId, bookId: active.book.id, chapterId: target.id, status: 'running', mode: 'outline', sourceRevision: target.revision, text: '' };
+            rememberJob(next); setJob(next); setPollError(false); setOutlineSelection('');
+          });
+          const decideChapterOutline = (record, accept) => {
+            const active = current.current, owner = outlineOwner;
+            const problem = outlineReviewProblem(active, owner, record, { recovery: recoveryRef.current, conflict, accept });
+            if (problem || outlineNeedsRefresh === active?.book.id) { setError({ message: t(problem || 'outlineRefreshNeeded') }); return; }
+            const operation = { action: accept ? 'acceptProposal' : 'rejectProposal', proposalId: record.id };
+            const snapshot = reviewSnapshot(active, operation), label = t(accept ? 'outlineUse' : 'outlineReject');
+            setConfirm({ outlineDecision: true, title: t(accept ? 'outlineReviewReplace' : 'outlineReject'), body: t(accept ? 'outlineReviewHint' : 'rejectHint'), label,
+              run: () => withBusy(async () => {
+                const latest = current.current, recheck = outlineReviewProblem(latest, owner, record, { recovery: recoveryRef.current, conflict, accept });
+                if (recheck || !reviewIsCurrent(latest, snapshot)) throw new Error(t(recheck || 'confirmChanged'));
+                if (outlineNeedsRefresh === latest.book.id) throw new Error(t('outlineRefreshNeeded'));
+                let saved;
+                try {
+                  saved = await call('mutate', { bookId: snapshot.bookId, expectedRevision: snapshot.revision, operation });
+                  if (!outlineReviewReceipt(latest.book, saved, record, accept)) throw Object.assign(new Error(t('outlineRefreshNeeded')), { code: 'RESPONSE' });
+                } catch (error) {
+                  if (['NETWORK', 'RESPONSE', 'STORAGE', 'INTERNAL', 'CONFLICT'].includes(error.code) && alive.current) {
+                    setOutlineNeedsRefresh(snapshot.bookId); setConfirm(null);
+                    throw new Error(t('outlineRefreshNeeded'));
+                  }
+                  throw error;
+                }
+                if (!alive.current || !outlineTarget(current.current, owner)) return;
+                if (!adopt(saved)) throw new Error(t('conflictTitle'));
+                setConfirm(null); setNotice(t(accept ? 'outlineSaved' : 'outlineRejected'));
+              }) });
+          };
+          const closeChapterOutline = () => {
+            const from = outlineOwner?.from === 'manage' ? 'manage' : 'writing';
+            if (busyRef.current || loading || guard || confirm || autosaveComposing.current) return;
+            outlineFocusReturn.current = outlineOwner ? { ...outlineOwner, from } : null;
+            navigatePage(from);
+          };
           const download = (filename, mime, text) => {
             const url = URL.createObjectURL(new Blob([text], { type: mime }));
             const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.click();
@@ -2436,7 +2651,6 @@ window.__ModuleLoader__.load({
             commit({ ...active, [group]: { ...active[group], [field]: nextValue } });
             if (group === 'chapter' && field === 'body') resetSelection();
             if (group !== 'candidate') autosaveRef.current.schedule();
-            setNotice('');
           };
           const constraintsInputBlocked = (confirmed = false) => busyRef.current || loading || !!recoveryRef.current || !!manager || !!guard || !!confirm && !confirmed;
           const acceptConstraintInput = (bookId, update) => {
@@ -2475,7 +2689,7 @@ window.__ModuleLoader__.load({
                 } catch { setStorageFailed(true); }
               }
             } else persist(next);
-            autosaveRef.current.schedule(); setConstraintsLimit(''); setNotice(''); return true;
+            autosaveRef.current.schedule(); setConstraintsLimit(''); return true;
           };
           const changeWritingConstraint = (bookId, action, { confirmed = false } = {}) => {
             const active = current.current, owner = constraintsEngine.current;
@@ -2497,7 +2711,7 @@ window.__ModuleLoader__.load({
             if (!node || !active?.chapter) return;
             // Toolbar focus and the requirements dialog must not re-read or
             // collapse a captured range. A fresh editor gesture captures a new intent.
-            if (event?.type === 'blur' && (popupRef.current?.contains(event.relatedTarget) || polishRequirements)) return;
+            if (event?.type === 'blur' && (isFindControl(event.relatedTarget) || popupRef.current?.contains(event.relatedTarget) || polishRequirements)) return;
             if (composing.current || event?.isComposing || event?.nativeEvent?.isComposing) { closeSelectionPopup(); return; }
             const captured = textareaValue(active.chapter.body) === node.value ? capturePolishSnapshot(active, node.selectionStart, node.selectionEnd) : null;
             const snapshot = equal(captured, selectionRef.current) ? selectionRef.current : captured;
@@ -2546,7 +2760,6 @@ window.__ModuleLoader__.load({
               rememberJob(next);
               if (alive.current && current.current?.book.id === snapshot.bookId) {
                 setJob(next); setPollError(false); setOriginalPolishKey(null); closeSelectionPopup(); setPolishRequirements(null);
-                setNotice('');
               }
             });
           };
@@ -2585,7 +2798,7 @@ window.__ModuleLoader__.load({
             }
             const next = { id: data.jobId, bookId: active.book.id, chapterId: active.chapterId, status: 'running', mode, sourceRevision: chapterOf(active)?.revision, text: '' };
             rememberJob(next);
-            if (alive.current && current.current?.book.id === active.book.id) { setJob(next); setPollError(false); setNotice(''); }
+            if (alive.current && current.current?.book.id === active.book.id) { setJob(next); setPollError(false); }
           });
           const create = () => transition(() => withBusy(async () => {
             const book = await call('create', { title: newTitle.trim() });
@@ -2690,9 +2903,13 @@ window.__ModuleLoader__.load({
           });
           // This follow-up has its own failure state: an acknowledged deletion
           // cannot become a "delete failed" error just because list/get failed.
-          const refreshDeletedLibrary = async () => {
+          const refreshDeletedLibrary = async (report = null) => {
             const refreshed = await refreshAfterBookDeletion(refreshList, () => !!current.current, openBook);
-            if (alive.current) setDeletionNotice(previous => previous && ({ ...previous, refreshFailed: !refreshed }));
+            if (alive.current) setDeletionNotice(previous => {
+              const state = report || previous;
+              return state && (!refreshed || state.cleanupPending || state.localCleanupPending) ? { ...state, refreshFailed: !refreshed } : null;
+            });
+            return refreshed;
           };
           const deleteManagedBook = () => withBusy(async () => {
             const reviewed = manager.snapshot;
@@ -2735,9 +2952,9 @@ window.__ModuleLoader__.load({
               epoch.current++; commit(next.workspace); resetSelection(); setConflict(null); setPollError(false);
               setNewChapter(''); setInstruction(''); switchTab('writing');
             }
-            setManager(null); setConfirm(null); setGuard(null); setNotice('');
-            setDeletionNotice({ title: reviewed.title, cleanupPending: result.cleanupPending, localCleanupPending, refreshFailed: false });
-            await refreshDeletedLibrary();
+            setManager(null); setConfirm(null); setGuard(null);
+            const refreshed = await refreshDeletedLibrary({ title: reviewed.title, cleanupPending: result.cleanupPending, localCleanupPending });
+            if (alive.current && refreshed && !result.cleanupPending && !localCleanupPending) setNotice(t('deleted', { title: reviewed.title }));
           });
           const inspectConflict = () => withBusy(async () => {
             const active = current.current;
@@ -2761,7 +2978,7 @@ window.__ModuleLoader__.load({
             setConflict(fields.length ? { book: active.book, fields } : null);
           };
           const chooseCandidate = id => transition(() => {
-            const active = current.current, p = active.book.proposals.find(item => item.id === id);
+            const active = current.current, p = active.book.proposals.find(item => item.id === id && item.mode !== 'outline');
             if (p) { commit({ ...active, candidateId: p.id, candidate: p.text, baseCandidate: p.text }); if (job?.status !== 'running') setJob(null); }
           }, 'candidate');
           const chooseCard = id => {
@@ -2787,7 +3004,7 @@ window.__ModuleLoader__.load({
             if (!active?.card) return;
             const card = editCardCategory(active.card, active.book, category);
             if (card === active.card) return;
-            commit({ ...active, card }); autosaveRef.current.schedule(); setNotice('');
+            commit({ ...active, card }); autosaveRef.current.schedule();
           };
           const createCardCategory = form => withBusy(async () => {
             const active = current.current, name = form?.name.trim(), serial = epoch.current;
@@ -2949,7 +3166,7 @@ window.__ModuleLoader__.load({
             };
             const outside = e => { if (!popupRef.current?.contains(e.target) && e.target !== editorRef.current) dismiss(); };
             const changed = () => { if (document.activeElement === editorRef.current) captureSelection(); };
-            const released = event => { if (document.activeElement === editorRef.current && event.target !== editorRef.current && !popupRef.current?.contains(event.target)) captureSelection(event); };
+            const released = event => { if (document.activeElement === editorRef.current && event.target !== editorRef.current && !isFindControl(event.target) && !popupRef.current?.contains(event.target)) captureSelection(event); };
             window.addEventListener('scroll', dismiss, true); window.addEventListener('resize', dismiss);
             document.addEventListener('pointerdown', outside); document.addEventListener('selectionchange', changed); document.addEventListener('mouseup', released);
             return () => {
@@ -3022,15 +3239,15 @@ window.__ModuleLoader__.load({
                 if (!stillValid()) return;
                 setJob(value); setPollError(false); rememberJob(value);
                 if (value.status === 'completed') {
-                  setNotice(t('generationFinished'));
                   try {
                     const latest = await call('get', { bookId }, controller.signal);
                     if (!stillValid()) return;
                     if (busyRef.current || autosaveRef.current?.running) queueLatest(latest);
-                    else if (adopt(latest) && value.chapterId === current.current.chapterId && !isDirty(current.current) && !recoveryRef.current && !conflict) {
+                    else if (adopt(latest) && value.mode !== 'outline' && value.chapterId === current.current.chapterId && !isDirty(current.current) && !recoveryRef.current && !conflict) {
                       const p = latest.proposals.find(item => item.id === value.proposalId);
                       if (p) commit({ ...current.current, candidateId: p.id, candidate: p.text, baseCandidate: p.text });
                     }
+                    if (latest.proposals.some(item => item.id === value.proposalId && item.chapterId === value.chapterId)) setNotice(t(value.mode === 'outline' ? 'outlineGenerated' : 'generationFinished'));
                   } catch (e) { if (stillValid()) messageError(e); }
                 } else if (value.status === 'running') timer = setTimeout(poll, 1000);
               } catch (e) {
@@ -3046,7 +3263,7 @@ window.__ModuleLoader__.load({
           }, [job?.id, w?.book.id, pollVersion]);
 
           const d = dirty(w), tabDirty = workspaceTabDirty(w), anyDirty = isDirty(w), chapter = chapterOf(w), selectedProposal = proposalOf(w);
-          const displayRecord = generatedDisplayRecord(w, selectedProposal, job, { recovery, conflict });
+          const displayRecord = generatedDisplayRecord(w, selectedProposal, job?.mode === 'outline' ? null : job, { recovery, conflict });
           const awaitingOutcome = displayRecord === job && !!job;
           const proposal = awaitingOutcome ? null : displayRecord;
           // Resolve the previous recovery copy before new typing can overwrite it.
@@ -3060,9 +3277,7 @@ window.__ModuleLoader__.load({
           const modelControlsLocked = locked || modelSaving;
           const writingTaskModes = ['draft', 'revise'];
           // Older proposals and the selection popup still have their own modes.
-          const modeKeys = { draft: 'modeDraft', continue: 'modeContinue', polish: 'modePolish', summary: 'modeSummary', revise: 'modeRevise' };
-          const activePolishJob = job?.mode === 'polish' && job.bookId === w?.book.id && job.chapterId === w?.chapterId &&
-            (job.status === 'running' || job.status === 'completed' && !w?.book.proposals.some(p => p.id === job.proposalId));
+          const modeKeys = { draft: 'modeDraft', continue: 'modeContinue', polish: 'modePolish', summary: 'modeSummary', revise: 'modeRevise', outline: 'chapterOutline' };
           const polishRecord = awaitingOutcome && job.mode !== 'polish' ? null : polishDisplayRecord(w, proposal, job);
           const polish = polishView(w, polishRecord), isPolish = proposal?.mode === 'polish';
           const polishDecision = polishPreviewDecision(w, polishRecord, originalPolishKey, { recovery, conflict });
@@ -3231,7 +3446,7 @@ window.__ModuleLoader__.load({
               h('p', { className: 'mx-hint', role: 'status' }, t('revisionCounts', revision.counts)),
               staleProposal(w, proposal) && h('p', { className: 'mx-banner', role: 'alert' }, t('stale')),
               (anyDirty || conflict) && h('p', { className: 'mx-hint' }, t('saveFirst')),
-              !revision.pieces.some(piece => piece.kind === 'hunk') && h('p', { className: 'mx-banner mx-info', role: 'status' }, t('revisionNoChanges')),
+              !revision.pieces.some(piece => piece.kind === 'hunk') && h('p', { className: 'mx-hint', role: 'status' }, t('revisionNoChanges')),
               h('div', { className: 'mx-revision-preview', role: 'region', 'aria-label': t('revisionPreview') }, revision.pieces.map((piece, index) => {
                 if (piece.kind === 'unchanged') return h('span', { key: 'text-' + index, className: 'mx-revision-text' }, piece.text);
                 const item = piece.hunk, snapshot = snapshots.get(item.id);
@@ -3309,6 +3524,7 @@ window.__ModuleLoader__.load({
                 h(Field, { label: t('instruction') }, h('textarea', { value: instruction, disabled: locked, rows: 2, maxLength: 60000, placeholder: t(mode === 'revise' ? 'revisePlaceholder' : 'instructionPlaceholder'), onChange: e => setInstruction(e.target.value) }))),
               h('div', { className: 'mx-partner-meta' },
                 h('span', { className: 'mx-hint mx-partner-model', title: modelDescription(model) || t('noModel') }, modelDescription(model) || t('noModel')),
+                 button(t('chapterOutline'), () => openChapterOutline(w.chapterId, 'writing'), { className: 'mx-outline-entry', 'data-mx-outline-chapter': w.chapterId, title: t('outlineHint'), disabled: locked }),
                 proposalsFor(w.book, w.chapterId).length > 0 && h('label', { className: 'mx-result-chooser mx-hint' }, t('results'), h('select', { 'aria-label': t('results'), value: proposal?.id || w.candidateId, disabled: locked || running || awaitingOutcome, onChange: e => chooseCandidate(e.target.value) }, proposalsFor(w.book, w.chapterId).map(p => h('option', { key: p.id, value: p.id }, t(modeKeys[p.mode]) + ' · ' + t(p.state) + ' · ' + formatDate(p.createdAt))))),
                 anyDirty && h('span', { className: 'mx-hint' }, t('saveFirst')),
                 modelProblem && h('span', { className: 'mx-hint', role: 'status' }, t(modelProblem)),
@@ -3569,8 +3785,8 @@ window.__ModuleLoader__.load({
             const id = formId.current + '-chapter-management';
             return h('section', { className: 'mx-subpanel mx-stack', 'aria-labelledby': id },
               h('h3', { id, ref: chapterManagementHeading, tabIndex: -1 }, t('chapterManagement')),
-              h('div', { className: 'mx-row' },
-                h('div', { className: 'mx-grow' }, h(Field, { label: t('newChapterTitle') }, h('input', { ref: addChapterInputRef, value: newChapter, maxLength: 300, disabled, onChange: e => setNewChapter(e.target.value) }))),
+              h('div', { className: 'mx-chapter-add-row' },
+                h(Field, { label: t('newChapterTitle') }, h('input', { ref: addChapterInputRef, value: newChapter, maxLength: 300, disabled, onChange: e => setNewChapter(e.target.value) })),
                 button(t('addChapter'), addChapter, { disabled: disabled || !newChapter.trim() || w.book.chapters.length >= 2000 })),
               h('p', { className: 'mx-hint' }, t('chapterStructureHint')),
               structural === 'chapterStructureBusy' && h('p', { className: 'mx-hint', role: 'status' }, t(structural)),
@@ -3582,6 +3798,7 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'mx-row' }, h('strong', null, (i + 1) + '. ' + entry.title), badge(t(entry.status)), w.chapterId === entry.id && badge(t('chapterCurrent'))),
                   h('div', { className: 'mx-actions' },
                     button(t('openChapter'), () => openManagedChapter(entry.id), props('openChapter', { disabled: locked })),
+                    button(t('chapterOutline'), () => openChapterOutline(entry.id, 'manage'), props('chapterOutline', { 'data-mx-outline-chapter': entry.id, disabled: locked })),
                     button(t('renameChapter'), () => setManager(previous => ({ ...previous, chapterEdit: edit ? null : { id: entry.id, title: multiline ? '' : entry.title } })), props('renameChapter', { 'aria-expanded': !!edit, disabled })),
                     button(t('chapterUp'), () => moveManagedChapter(entry.id, 'up'), props('chapterUp', { disabled: disabled || !!structural || i === 0 })),
                     button(t('chapterDown'), () => moveManagedChapter(entry.id, 'down'), props('chapterDown', { disabled: disabled || !!structural || i === w.book.chapters.length - 1 })),
@@ -3597,9 +3814,8 @@ window.__ModuleLoader__.load({
               h('p', { className: 'mx-hint' }, t('bookIdentity', { id: manager.snapshot.bookId, revision: manager.snapshot.revision })),
               h('div', null, h('h3', null, t('savedBookTitle')), h('pre', null, manager.snapshot.title)),
               manageProblem && h('p', { className: 'mx-banner', role: 'status' }, t(manageProblem === 'confirmChanged' ? 'manageStale' : manageProblem)),
-              manager.uncertain && !error && h('p', { className: 'mx-banner', role: 'status' }, t('deleteUncertain')),
-              error && h('p', { className: 'mx-banner mx-error', role: 'alert' }, error.message),
-              chapterOperationUncertain && !error && h('p', { className: 'mx-banner', role: 'status' }, t('chapterWriteUncertain')),
+              manager.uncertain && h('p', { className: 'mx-banner', role: 'status' }, t('deleteUncertain')),
+              chapterOperationUncertain && h('p', { className: 'mx-banner', role: 'status' }, t('chapterWriteUncertain')),
               renderChapterManagement(),
               h('section', { className: 'mx-subpanel mx-stack', 'aria-label': t('renameBook') },
                 h('h3', null, t('renameBook')),
@@ -3611,6 +3827,45 @@ window.__ModuleLoader__.load({
                 h(Field, { label: t('deleteTypeTitle') }, h('input', { value: manager.typedTitle, disabled: busy || !!manageProblem || manager.uncertain, autoComplete: 'off', spellCheck: false, onChange: e => setManager(previous => ({ ...previous, typedTitle: e.target.value })) })),
                 deleteProblem === 'deleteBusy' && h('p', { className: 'mx-banner', role: 'status' }, t('deleteBusy')),
                 button(t('deleteBook'), deleteManagedBook, { className: 'mx-danger', disabled: busy || !!deleteProblem || manager.uncertain }))));
+          const renderChapterOutline = () => {
+            const target = outlineTarget(w, outlineOwner);
+            const back = button(t(outlineOwner?.from === 'manage' ? 'outlineBackManagement' : 'outlineBackWriting'), closeChapterOutline, { disabled: busy || loading });
+            if (!target) return renderUtilityPage('chapterOutline', h('p', { className: 'mx-hint' }, t('outlineMissing')), back);
+            const candidates = outlineProposals(w.book, target.id);
+            const record = candidates.find(p => p.id === outlineSelection) || candidates.find(p => p.state === 'ready') || candidates[0];
+            const exactJob = job?.mode === 'outline' && job.chapterId === target.id && job.bookId === w.book.id ? job : null;
+            const uncertain = outlineNeedsRefresh === w.book.id;
+            const pending = exactJob?.status === 'completed' && !candidates.some(p => p.id === exactJob.proposalId);
+            const acceptProblem = record && outlineReviewProblem(w, outlineOwner, record, { recovery, conflict, accept: true });
+            const rejectProblem = record && outlineReviewProblem(w, outlineOwner, record, { recovery, conflict });
+            const canGenerate = !locked && !conflict && !anyDirty && !running && !pending && !uncertain && !modelProblem && !!model?.provider && !!model?.model;
+            return renderUtilityPage('chapterOutline',
+              h('div', { className: 'mx-row mx-row-between' }, h('strong', null, (w.book.chapters.indexOf(target) + 1) + '. ' + target.title), back),
+              h('p', { className: 'mx-hint' }, t('outlineHint')),
+              h(Field, { label: t('chapterOutline'), visuallyHidden: true }, textarea('chapter', 'outline', { rows: 12, maxLength: 50000, className: 'mx-outline-editor', readOnly: locked || !!conflict || uncertain })),
+              h('div', { className: 'mx-row' }, button(t('save'), async () => { if (await saveAll() && alive.current) setNotice(t('outlineSaved')); }, { className: 'mx-primary', disabled: locked || !!conflict || uncertain || !autosaveCanSave(w, autosaveRef.current) }),
+                button(t('outlineRefresh'), refreshChapterOutline, { disabled: busy || loading }), uncertain && h('span', { className: 'mx-hint', role: 'status' }, t('outlineRefreshNeeded'))),
+              h('section', { className: 'mx-subpanel mx-stack' },
+                h('div', { className: 'mx-row mx-row-between' }, h('h3', null, t('outlineCandidate')),
+                  button(t('outlineAI'), startChapterOutline, { className: 'mx-primary', disabled: !canGenerate, title: anyDirty ? t('saveFirst') : modelProblem ? t(modelProblem) : undefined })),
+                h(Field, { label: t('outlineInstruction') }, h('textarea', { rows: 2, maxLength: 60000, value: outlineInstruction, disabled: busy || !!recovery, onChange: event => setOutlineInstruction(event.target.value) })),
+                anyDirty && h('span', { className: 'mx-hint' }, t('saveFirst')),
+                modelProblem && h('span', { className: 'mx-hint' }, t(modelProblem)),
+                exactJob?.status === 'running' && h('div', { className: 'mx-row' }, h('span', { className: 'mx-hint', role: 'status' }, t('outlineGenerating')),
+                  button(t('cancelJob'), cancelActiveJob, { className: 'mx-danger' })),
+                pollError && exactJob && h('div', { className: 'mx-row' }, h('span', { className: 'mx-hint', role: 'status' }, t('pollError')),
+                  button(t('retry'), () => { setPollError(false); setPollVersion(value => value + 1); })),
+                !pollError && pending && h('p', { className: 'mx-hint', role: 'status' }, t('polishAwaitProposal')),
+                exactJob && ['cancelled', 'failed'].includes(exactJob.status) && h('p', { className: 'mx-hint', role: 'status' }, t(exactJob.status) + (exactJob.error ? ' · ' + exactJob.error : '')),
+                record && h(React.Fragment, null,
+                  h(Field, { label: t('results') }, h('select', { value: record.id, onChange: e => setOutlineSelection(e.target.value) },
+                    candidates.map(p => h('option', { key: p.id, value: p.id }, t(p.state) + ' · ' + formatDate(p.createdAt))))),
+                  h('pre', { className: 'mx-outline-preview' }, record.text),
+                  acceptProblem === 'outlineCandidateStale' && h('p', { className: 'mx-hint' }, t(acceptProblem)),
+                  record.state === 'ready' && h('div', { className: 'mx-actions' },
+                    button(t('outlineUse'), () => decideChapterOutline(record, true), { className: 'mx-primary', disabled: locked || uncertain || !!acceptProblem }),
+                    button(t('outlineReject'), () => decideChapterOutline(record, false), { disabled: locked || uncertain || !!rejectProblem })))));
+          };
           const renderContextPage = () => renderUtilityPage('context',
             h('p', { className: 'mx-hint' }, t('contextPageHint')),
             chapter && h('div', { className: 'mx-row' }, badge(chapter.title), badge(t(modeKeys[mode]))),
@@ -3635,7 +3890,7 @@ window.__ModuleLoader__.load({
                 job.error && h('p', { className: 'mx-hint', role: 'status' }, String(job.error)),
                 h('div', { className: 'mx-actions' }, !running && button(t('dismiss'), () => setJob(null)), pollError && button(t('retry'), () => { setPollError(false); setPollVersion(v => v + 1); })))),
             proposal?.context && renderReport({ report: proposal.context }, 'generatedContext'));
-          const writingLayout = tab === 'writing' && !!chapter && !d.candidate && !recovery && !conflict && !error && !deletionNotice && !storageFailed && cleanupPendingCount === 0;
+          const writingLayout = tab === 'writing' && !!chapter && !d.candidate && !recovery && !conflict && !deletionNotice && !storageFailed && cleanupPendingCount === 0;
           const folded = controlsFolded && writingLayout;
           const renderFoldedCritical = () => autosaveCanSave(w, autosaveRef.current) && h(React.Fragment, null,
             toolbarButton('save', t('saveNow'), saveAll, { disabled: locked || !!conflict }),
@@ -3645,10 +3900,9 @@ window.__ModuleLoader__.load({
           const generateProblem = writingTaskProblem || modelProblem || (!model?.provider || !model?.model ? 'noModel' : '');
           const taskTitle = (key, problem) => t(key) + (problem ? ' · ' + t(problem) : '');
           const renderWritingFeedback = () => {
-            const jobStatus = (running || awaitingOutcome) && job?.mode !== 'polish' ? t(running ? ['analyzing', 'optimizing'].includes(job.phase) ? job.phase : 'generating' : 'polishAwaitProposal') : '';
+            const jobStatus = (running || awaitingOutcome) && job?.mode !== 'polish' ? t(running ? job.mode === 'outline' ? 'outlineGenerating' : ['analyzing', 'optimizing'].includes(job.phase) ? job.phase : 'generating' : 'polishAwaitProposal') : '';
             const terminal = !!job && ['failed', 'cancelled'].includes(job.status);
-            const message = pollError ? t('pollError') : terminal ? t(job.status) + (job.error ? ' · ' + String(job.error) : '') : jobStatus ||
-              (!activePolishJob ? notice : '');
+            const message = pollError ? t('pollError') : terminal ? t(job.status) + (job.error ? ' · ' + String(job.error) : '') : jobStatus;
             if (!message) return null;
             const detail = terminal ? job.chapterId !== w.chapterId ? t('jobOtherChapter') : proposal ? t('previousResult') : '' : '';
             const label = message + (detail ? ' · ' + detail : '');
@@ -3656,26 +3910,68 @@ window.__ModuleLoader__.load({
               h('span', { className: 'mx-hint mx-job-terminal', role: terminal && job.status === 'failed' && !pollError ? 'alert' : 'status', title: label }, label),
               pollError && toolbarButton('refresh', t('retry'), () => { setPollError(false); setPollVersion(v => v + 1); }));
           };
+          const cancelActiveJob = () => withBusy(async () => { const result = await call('cancel', { jobId: job.id }); if (alive.current) { setJob(result); rememberJob(result); setPollVersion(v => v + 1); } }, false);
           const renderWritingActions = () => h('div', { className: 'mx-topbar-group mx-topbar-actions', role: 'group', 'aria-label': t('writingControls') },
             !folded && toolbarButton('generate', t('generate'), generate, { className: 'mx-primary', title: taskTitle('generate', generateProblem), disabled: locked || anyDirty || !!conflict || running || requirementMissing || !!modelProblem || !model?.provider || !model?.model }),
             bulkVisible && toolbarButton('approve', t('approveAll'), () => isRevision ? applyRevisionAll(bulkSnapshot) : isPolish ? applyPolish(bulkSnapshot, true) : applyGenerated(bulkSnapshot, true), { disabled: !!bulkProblem || !bulkPreview, title: t('approveAll') + (bulkProblem ? ' · ' + t(bulkProblem) : '') }),
-            running && toolbarButton('cancel', t('cancelJob'), () => withBusy(async () => { const result = await call('cancel', { jobId: job.id }); if (alive.current) { setJob(result); rememberJob(result); setPollVersion(v => v + 1); } }, false), { className: 'mx-danger' }),
+            running && toolbarButton('cancel', t('cancelJob'), cancelActiveJob, { className: 'mx-danger' }),
+            folded && toolbarButton('outline', t('chapterOutline'), () => openChapterOutline(w.chapterId, 'writing'), { 'data-mx-outline-chapter': w.chapterId }),
             folded && renderFoldedCritical(),
             writingLayout && toolbarButton(folded ? 'expand' : 'focus', t(folded ? 'expandControls' : 'collapseControls'), () => focusWriting(!folded),
               { ref: foldButtonRef, disabled: false, 'aria-expanded': !folded, 'aria-controls': taskId }));
           const pageButton = (value, label, dirty = false) => toolbarButton(value, t(label), () => navigatePage(value), {
             key: value, 'aria-pressed': tab === value, 'aria-controls': formId.current, disabled: busy || loading, dirty,
           });
+          const findBlocked = !!(guard || confirm || polishRequirements || constraintsHelpOpen);
+          const findId = formId.current + '-find';
+          const openPageFind = () => {
+            if (findBlocked || loading || autosaveComposing.current || composing.current || findInputRef.current?.dataset.findComposing) return false;
+            closeSelectionPopup();
+            if (findOpen && findInputRef.current) { findInputRef.current.focus({ preventScroll: true }); findInputRef.current.select(); }
+            else {
+              const own = rootRef.current;
+              const active = own?.ownerDocument.activeElement;
+              findReturnFocus.current = own?.contains(active) ? active : findButtonRef.current;
+              setFindOpen(true);
+            }
+            return true;
+          };
+          const dismissPageFind = () => {
+            const own = rootRef.current, previous = findReturnFocus.current;
+            const restore = isFindControl(own?.ownerDocument.activeElement);
+            findReturnFocus.current = null; setFindOpen(false);
+            if (restore) (own?.contains(previous) && previous.getClientRects().length ? previous : findButtonRef.current)?.focus({ preventScroll: true });
+          };
+          const handlePageFindKey = event => {
+            if (findBlocked || event.defaultPrevented || event.isComposing || event.nativeEvent?.isComposing || event.keyCode === 229 || autosaveComposing.current || composing.current || findInputRef.current?.dataset.findComposing) return;
+            if (findShortcut(event) ? openPageFind() : event.key === 'Escape' && findOpen) {
+              event.preventDefault(); event.stopPropagation();
+              if (event.key === 'Escape') dismissPageFind();
+            }
+          };
+          useEffect(() => {
+            // Mere focus in another panel does not make its browser shortcut ours.
+            const own = rootRef.current, doc = own?.ownerDocument;
+            if (!doc || findBlocked) return;
+            const fromPageBody = event => {
+              if (event.target === doc.body && doc.activeElement === doc.body && own.getClientRects().length && !own.closest('[inert],[hidden]')) handlePageFindKey(event);
+            };
+            doc.addEventListener('keydown', fromPageBody, true);
+            return () => doc.removeEventListener('keydown', fromPageBody, true);
+          });
+          useEffect(() => { if (findBlocked) { findReturnFocus.current = null; setFindOpen(false); } }, [findBlocked]);
           const chapterDeleteConfirm = confirm?.chapterRemoval;
-          const closeConfirmation = () => { setConfirm(null); if (chapterDeleteConfirm) setError(null); };
+          const closeConfirmation = () => { setConfirm(null); if (chapterDeleteConfirm || confirm?.outlineDecision) setError(null); };
           const chapterDeleteBlock = chapterDeleteConfirm && managedChapterProblem(chapterDeleteConfirm.snapshot, true);
-          const renderTopbar = () => h('header', { inert: (constraintsHelpOpen || !!chapterDeleteConfirm) || undefined, className: 'mx-topbar' },
+          const renderTopbar = () => h('header', { inert: (constraintsHelpOpen || !!chapterDeleteConfirm || !!confirm?.outlineDecision) || undefined, className: 'mx-topbar' },
             w && h('nav', { className: 'mx-topbar-group', 'aria-label': t('pages') }, ['writing', 'constraints', 'cards', 'settings', 'history'].map(value =>
               pageButton(value, value, !!((value === 'writing' && (d.chapter || d.candidate)) || (value === 'cards' && d.card) || (value === 'settings' && tabDirty.settings) || (value === 'constraints' && tabDirty.constraints))))),
             h('div', { className: 'mx-topbar-group mx-topbar-book', role: 'group', 'aria-label': t('bookTools') }, renderBookPicker(),
               h('nav', { className: 'mx-book-page-links', 'aria-label': t('workspacePages') },
                 pageButton('tools', 'workspaceTools'), pageButton('manage', 'manageBooks'), pageButton('context', 'context'), pageButton('advanced', 'advanced')),
-              toolbarButton('refresh', t('refresh'), refreshWorkspace)),
+              toolbarButton('find', t('findText'), openPageFind, { ref: findButtonRef, disabled: findBlocked || loading, 'data-mx-find-trigger': '', 'aria-keyshortcuts': 'Control+F Meta+F', 'aria-expanded': findOpen && !findBlocked, 'aria-controls': findOpen && !findBlocked ? findId : undefined }),
+              toolbarButton('refresh', t('refresh'), refreshWorkspace),
+              w && autosaveRef.current?.failed && toolbarButton('save', t('autosaveRetry'), saveAll, { title: t('autosavePaused'), disabled: locked || !autosaveCanSave(w, autosaveRef.current) || !!conflict })),
             w && h('div', { className: 'mx-topbar-group mx-topbar-chapter' }, renderChapterPicker(), tab === 'writing' && chapter && renderTitleControl()),
             tab === 'writing' && chapter && renderWritingActions(),
             tab === 'writing' && chapter && renderWritingFeedback());
@@ -3683,6 +3979,7 @@ window.__ModuleLoader__.load({
             switch (tab) {
               case 'tools': return renderBookTools();
               case 'manage': return renderManagementPage();
+              case 'outline': return renderChapterOutline();
               case 'context': return renderContextPage();
               case 'advanced': return renderDetailsPage();
             }
@@ -3701,25 +3998,25 @@ window.__ModuleLoader__.load({
                 }, { disabled: locked, 'aria-controls': formId.current }));
             }
           };
-          return h('main', { ref: rootRef, className: 'mx-root' + (writingLayout ? ' mx-root-writing' : '') + (folded ? ' mx-controls-folded' : ''), 'aria-label': t('nav'), 'aria-busy': loading || busy,
-            onPointerDownCapture: () => { if (document.activeElement === editorRef.current) captureSelection(); },
-            onCompositionStartCapture: e => { if (!e?.target?.closest?.('.mx-constraints-editor-host')) autosaveComposing.current = true; },
+          return h('main', { ref: rootRef, className: 'mx-root' + (writingLayout ? ' mx-root-writing' : '') + (folded ? ' mx-controls-folded' : ''), 'aria-label': t('nav'),
+            onKeyDownCapture: handlePageFindKey,
+            onPointerDownCapture: event => { if (!isFindControl(event.target) && document.activeElement === editorRef.current) captureSelection(); },
+            onCompositionStartCapture: e => { if (!isFindControl(e?.target) && !e?.target?.closest?.('.mx-constraints-editor-host')) autosaveComposing.current = true; },
             // Native form fields and the Markdown engine each release their own
             // composition. The engine waits for the final native transaction.
             onCompositionEndCapture: e => {
-              if (!e?.target?.closest?.('.mx-constraints-editor-host')) { autosaveComposing.current = false; autosaveRef.current.schedule(); }
+              if (!isFindControl(e?.target) && !e?.target?.closest?.('.mx-constraints-editor-host')) { autosaveComposing.current = false; autosaveRef.current.schedule(); }
             },
-            onBlurCapture: e => { if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) void autosaveRef.current.flush(); },
+            onBlurCapture: e => { if (!isFindControl(e.target) && !isFindControl(e.relatedTarget) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) void autosaveRef.current.flush(); },
             onKeyDown: e => { if (e.key === 'Escape') closeSelectionPopup(); if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && !e.isComposing && !e.nativeEvent?.isComposing && !composing.current && !autosaveComposing.current && !guard && !confirm) { e.preventDefault(); if (autosaveCanSave(current.current, autosaveRef.current) && !busyRef.current) saveAll(); } },
           }, h('style', null, CSS),
           renderTopbar(),
-          error && !guard && !confirm && !manager && !polishRequirements && h(Modal, { title: t(error.code === 'REVIEW_REQUIRED' ? 'reviewCheckFailed' : error.code === 'CONFLICT' ? 'conflictTitle' : 'requestFailed'), busy, onCancel: () => setError(null), actions: cancelRef => [
-            w && error.code !== 'REVIEW_REQUIRED' && button(t('autosaveRetry'), saveAll, { disabled: locked || !autosaveCanSave(w, autosaveRef.current) || !!conflict }),
-            w && button(t('reviewLatest'), inspectConflict), button(t('dismiss'), () => setError(null), { disabled: false, ref: cancelRef }),
-          ] }, h(React.Fragment, null, h('p', { role: 'alert' }, error.message), (autosaveRef.current?.failed || conflict) && h('p', { className: 'mx-hint' }, t('autosavePaused')), error.code && h('span', { className: 'mx-hint' }, error.code))),
-          h('div', { ref: contentRef, className: 'mx-content-pane', inert: (constraintsHelpOpen || !!chapterDeleteConfirm) || undefined },
-          (tab !== 'writing' || !chapter) && notice && !activePolishJob && h('div', { className: 'mx-banner mx-info', role: 'status' }, notice),
-          deletionNotice && h('section', { className: 'mx-banner mx-stack', role: deletionNotice.cleanupPending || deletionNotice.localCleanupPending || deletionNotice.refreshFailed ? 'alert' : 'status' },
+          findOpen && !findBlocked && h(PageFind, { rootRef, pageRef: findPageRef, inputRef: findInputRef, id: findId, t, writing: tab === 'writing',
+            scope: tab + '\0' + (w?.book.id || '') + '\0' + (tab === 'writing' ? w?.chapterId || '' : ''), onClose: dismissPageFind }),
+          h('div', { className: 'mx-toast-layer', role: 'status', 'aria-live': 'polite', 'aria-atomic': true },
+            toast && h('div', { className: 'mx-toast', 'data-error': !!toastError }, h('span', { className: 'mx-toast-text' }, toast.message))),
+          h('div', { ref: contentRef, className: 'mx-content-pane', 'aria-busy': loading || busy, inert: (constraintsHelpOpen || !!chapterDeleteConfirm || !!confirm?.outlineDecision) || undefined },
+          deletionNotice && h('section', { className: 'mx-banner mx-stack', role: 'alert' },
             h('p', null, t(deletionNotice.cleanupPending ? 'deleteCleanupPending' : 'deleted', { title: deletionNotice.title })),
             deletionNotice.localCleanupPending && h('p', null, t('deleteLocalCleanupPending')),
             deletionNotice.refreshFailed && h('p', null, t('deleteRefreshFailed')),
@@ -3732,7 +4029,7 @@ window.__ModuleLoader__.load({
           renderConflict(),
           h('section', { className: 'mx-stack mx-book-workspace' },
             loading && h('p', { role: 'status', className: 'mx-hint' }, t('loading')),
-            h('div', { id: formId.current, className: 'mx-writing-host' }, renderCurrentPage()))),
+            h('div', { id: formId.current, ref: findPageRef, className: 'mx-writing-host' }, renderCurrentPage()))),
           renderSelectionPopup(),
           constraintsHelpOpen && h(Modal, { id: constraintsHelpId, role: 'dialog', title: t('constraintsHelp'), onCancel: closeConstraintsHelp, returnFocus: constraintsHelpTrigger,
             actions: closeRef => [button(t('close'), closeConstraintsHelp, { key: 'close', ref: closeRef, disabled: false })] },
@@ -3748,12 +4045,12 @@ window.__ModuleLoader__.load({
              h('div', null, h('h3', null, t('originalPassage')), h('pre', null, polishRequirements.snapshot.text)),
              h(Field, { label: t('polishRequirement') }, h('textarea', { ref: requirementsRef, value: polishRequirements.text, rows: 5, maxLength: 60000, disabled: busy, required: true, onChange: e => setPolishRequirements(previous => previous && ({ ...previous, text: e.target.value })) })),
              requirementsProblem && h('p', { className: 'mx-banner', role: 'alert' }, t(requirementsProblem)),
-             error && h('p', { className: 'mx-banner mx-error', role: 'alert' }, error.message))),
+             error && h('p', { className: 'mx-hint mx-text-error', role: 'alert' }, error.message))),
           guard && h(Modal, { title: t('unsavedTitle'), busy, onCancel: () => setGuard(null), actions: cancelRef => [
             button(t('stay'), () => setGuard(null), { key: 'stay', ref: cancelRef, disabled: busy }),
             button(t('discardContinue'), async () => { const next = guard; if (await discardScope(next.scope)) { setGuard(null); next.run(); } }, { key: 'discard', className: 'mx-danger', disabled: busy }),
             button(t('saveContinue'), async () => { const next = guard; if (await saveAll()) { setGuard(null); next.run(); } }, { key: 'save', className: 'mx-primary', disabled: busy || !!conflict }),
-          ] }, h(React.Fragment, null, h('p', null, t('unsavedHint')), error && h('p', { role: 'alert', className: 'mx-banner mx-error' }, error.message))),
+          ] }, h(React.Fragment, null, h('p', null, t('unsavedHint')), error && h('p', { role: 'alert', className: 'mx-hint mx-text-error' }, error.message))),
           confirm && h(Modal, { title: confirm.title, busy, returnFocus: chapterDeleteConfirm ? chapterDeleteTrigger : undefined, onCancel: closeConfirmation, actions: cancelRef => [
             button(t('cancel'), closeConfirmation, { key: 'cancel', ref: cancelRef, disabled: busy }),
             button(confirm.label, chapterDeleteConfirm ? () => confirmChapterDeletion(confirm) : confirm.run, { key: 'confirm', className: chapterDeleteConfirm ? 'mx-danger' : 'mx-primary',
@@ -3763,7 +4060,7 @@ window.__ModuleLoader__.load({
              h('p', { className: 'mx-hint' }, t('chapterCountDetails', { history: chapterDeleteConfirm.history, proposals: chapterDeleteConfirm.proposals })),
              chapterDeleteBlock && !error && h('p', { role: 'status', className: 'mx-hint' }, t(chapterDeleteBlock === 'confirmChanged' ? 'manageStale' : chapterDeleteBlock)),
              h(Field, { label: t('chapterDeleteType') }, h('input', { value: confirm.typedTitle, disabled: busy || confirm.uncertain, autoComplete: 'off', spellCheck: false,
-               onChange: e => setConfirm(previous => previous?.chapterRemoval ? { ...previous, typedTitle: e.target.value } : previous) }))), error && h('p', { role: 'alert', className: 'mx-banner mx-error' }, error.message))));
+               onChange: e => setConfirm(previous => previous?.chapterRemoval ? { ...previous, typedTitle: e.target.value } : previous) }))), error && h('p', { role: 'alert', className: 'mx-hint mx-text-error' }, error.message))));
         }
 
         ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'ycx-inspiration', locale: NS }, App));

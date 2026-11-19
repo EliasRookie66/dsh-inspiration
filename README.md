@@ -1,6 +1,6 @@
 # 灵感 inspiration
 
-**当前版本：v0.4.14**。新增对 DSH `0.2.2-rc.5` 的支持，仍兼容 `0.2.2-rc.3`。已保存的作品无需迁移。
+**当前版本：v0.4.18**。可从正文或章节管理打开「本章计划」，手动编辑或审阅 AI 细纲；支持当前页查找和一秒非阻塞提示。已有细纲直接沿用，无需迁移。
 
 A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precise selection polishing, and author-approved inline edits.
 
@@ -10,16 +10,16 @@ A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precis
 
 ## 安装与兼容性
 
-安装 **v0.4.14** 请选择 GitHub Release 的预构建包或固定版本标签。源码及可运行浏览器产物也可从 [开发分支 `feat/writing-constraints`](https://github.com/EliasRookie66/dsh-inspiration/tree/feat/writing-constraints) 获取。不要直接将含写作约束的作品数据交给更早的 `v0.1.0` 读取。
+安装 **v0.4.18** 请选择 GitHub Release 的预构建包或固定版本标签。源码及可运行浏览器产物也可从 [开发分支 `feat/writing-constraints`](https://github.com/EliasRookie66/dsh-inspiration/tree/feat/writing-constraints) 获取。不要直接将含写作约束的作品数据交给更早的 `v0.1.0` 读取。
 
-- v0.4.14 支持 DSH **0.2.2-rc.3** 与 **0.2.2-rc.5**，Node.js 要求 **>=22**。其他 DSH 版本未验证，不建议跳过兼容检查。
+- v0.4.18 支持 DSH **0.2.2-rc.3** 与 **0.2.2-rc.5**，Node.js 要求 **>=22**。其他 DSH 版本未验证，不建议跳过兼容检查。
 - 在目标 DSH Web／Desktop 的「插件管理 → 添加插件」中使用：
 
   ```text
-  github:EliasRookie66/dsh-inspiration#v0.4.14
+  github:EliasRookie66/dsh-inspiration#v0.4.18
   ```
 
-- 也可从 [v0.4.14 Release](https://github.com/EliasRookie66/dsh-inspiration/releases/tag/v0.4.14) 下载 [预构建安装包](https://github.com/EliasRookie66/dsh-inspiration/releases/download/v0.4.14/ycx-dsh-inspiration-0.4.14.tgz)，通过宿主支持的包安装入口使用。同一页面提供 `SHA256SUMS` 校验文件。
+- 也可从 [v0.4.18 Release](https://github.com/EliasRookie66/dsh-inspiration/releases/tag/v0.4.18) 下载 [预构建安装包](https://github.com/EliasRookie66/dsh-inspiration/releases/download/v0.4.18/ycx-dsh-inspiration-0.4.18.tgz)，通过宿主支持的包安装入口使用。同一页面提供 `SHA256SUMS` 校验文件。
 - 源码与可运行 JavaScript 均位于仓库根目录，没有安装期构建脚本。是否需要刷新或重新启动，以宿主安装结果为准；先保存当前工作。
 - 本项目尚未发布到 npm；仓库名与包标识 `@ycx/dsh-inspiration` 不必相同。
 
@@ -45,11 +45,23 @@ A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precis
 
 差异采用轻量行内/逐行展示，新文本在前、原文在后；不再用重边框卡片包装每处修改。真实替换显示确切旧文字；纯插入则展示**插入位置的原文上下文**并明确标注此处新增，不把空替换范围误称为缺失原文。仅换行、Tab 或空格的改动有可见提示，不再显示空白绿条。用于对照的上下文不会进入实际替换范围，精确的原始偏移与确认逻辑不变。
 
-写作界面不再显示「本章计划」、正文操作说明、选区计数提示和「章节状态」下拉框；已有计划和状态数据仍保留，原有计划仍可作为上下文使用。顶部不再固定留出整条 64px 空白，标题行依据宿主窗口按钮的实际横向安全区避让，整体更靠上。
+正文操作说明、选区计数提示和「章节状态」下拉框不占写作区；已有状态数据保留。顶部不再固定留出整条 64px 空白，标题行依据宿主窗口按钮的实际横向安全区避让，整体更靠上。
 
 **「设定卡」**先显示紧凑列表，一行摘要不再占用独立滚动区。点卡片开始编辑，宽窗口保留左侧列表，窄窗口把整列宽度留给编辑器；用「返回设定卡列表」返回。设置项集中排列，自动保存及切卡前的未保存保护不变。
 
 设定卡预设 **世界观、人物、规则、时间线、未解伏笔** 五个分类。用列表上方的「分类」切换筛选，用「新建分类」添加本作品的自定义分类，然后在卡片编辑器选择归类。筛选不会改变卡片，按当前分类新建卡片时会预填分类。「按类型」让卡片回到由原类型决定的分类；「上下文类型」和「分类」独立，重新归类不改变规则卡的硬约束行为。JSON 备份保留分类和归属；新增分类后，不建议用早于 v0.4.13 的版本读取新版作品 JSON。
+
+**提示规范：**「已删除章节」「已创建」等短消息统一用 1 秒浮层提示，不占文档布局、不抢焦点、不拦截输入；后台自动保存不逐次提示。不要新增横跨内容区的完成通知条。删除确认、保存重试、冲突与草稿恢复等需要用户处理的状态不由短提示替代。
+
+**当前页查找：** 在「灵感」内按 `Ctrl+F` / `⌘F`，或点击顶栏的放大镜。输入词句后显示匹配数；`Enter` 下一处，`Shift+Enter` 上一处，`Esc` 关闭。正文只查当前章编辑器（包括尚未保存的手改文本）；其他页只查当前页面已呈现的文本或字段，不查隐藏或折叠内容，也不跨章节。写作约束的 CodeMirror 只查已渲染的行。查找独立高亮，不改作者的选区，不会触发润色，也不会强制保存。若浏览器或宿主先处理了快捷键，可使用放大镜。
+
+## 章级细纲
+
+可以从「作品管理 → 章节管理」的任意章节行打开「本章计划」，也可以从正文页「写作任务」下方直接打开当前章。两处入口编辑相同的章节字段；已有章纲直接显示，手改走原有自动保存和本地草稿保护。
+
+点击「AI 生成细纲」才会使用当前写作模型，补充要求可选。生成仅保存为候选，和正文提案分开。审阅后确认「采纳细纲」才会替换该章细纲，不改正文；如果源章节已经改动，须生成新候选才能采纳。
+
+「起草本章」和它的上下文预览会将**非空的已保存细纲逐字、完整**纳入提示词，要求模型按它展开，而非当作已发生事实。预算不足会拒绝起草，不会裁剪细纲；空细纲不阻止起草，按需重写和选区润色不改变原有的上下文规则。生成过细纲候选的作品不要降级到早于 v0.4.17 的插件打开。
 
 ## 选中文字后的原位润色
 

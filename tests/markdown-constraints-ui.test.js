@@ -635,7 +635,7 @@ test('writing guide opens before Add category, owns focus, and never replaces th
   assert.match(source, /constraintsHelpOpen && h\(Modal, \{ id: constraintsHelpId, role: 'dialog', title: t\('constraintsHelp'\), onCancel: closeConstraintsHelp, returnFocus: constraintsHelpTrigger/);
   assert.match(source, /ref: closeRef, disabled: false/);
   assert.match(source, /const target = returnFocus\?\.current \|\| old/);
-  assert.equal((source.match(/inert: \(constraintsHelpOpen \|\| !!chapterDeleteConfirm\) \|\| undefined/g) || []).length, 2);
+  assert.equal((source.match(/inert: \(constraintsHelpOpen \|\| !!chapterDeleteConfirm \|\| !!confirm\?\.outlineDecision\) \|\| undefined/g) || []).length, 2);
   assert.match(source, /constraintsHelpOpen = !constraintsHelpBlocked && tab === 'constraints'/);
   assert.match(source, /h\('pre', \{ className: 'mx-constraint-guide-example' \}, t\('constraintsGuideExample'\)\)/);
 });

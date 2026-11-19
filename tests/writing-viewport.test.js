@@ -78,16 +78,15 @@ test('one ID-valued native chapter picker remains pinned in normal and focus mod
 test('header omits the entire save panel while automatic save, error retry and Ctrl+S remain', () => {
   const header = region("          const renderTopbar =", "          return h('main'");
   for (const forbidden of ['mx-save-controls', "t('unsaved')", "t('saved')", "t('autosaveHint')", "t('saveNow')", "t('discard')"]) assert(!header.includes(forbidden), forbidden);
-  const errors = region('          error &&', "          h('div', { ref: contentRef");
-  assert(errors.includes("button(t('autosaveRetry'), saveAll"));
-  assert(errors.includes('!autosaveCanSave(w, autosaveRef.current)'));
+  assert(header.includes("autosaveRef.current?.failed && toolbarButton('save', t('autosaveRetry'), saveAll"));
+  assert(header.includes('!autosaveCanSave(w, autosaveRef.current)'));
   assert(source.includes("if (autosaveCanSave(current.current, autosaveRef.current) && !busyRef.current) saveAll()"));
 });
 
 test('non-writing tabs, recovery/error flows and short viewports retain an accessible scroll path', () => {
   assert(rule('.mx-content-pane').includes('overflow:auto'));
   const gate = source.match(/const writingLayout = ([^;]+);/)[1];
-  for (const marker of ["tab === 'writing'", '!!chapter', '!d.candidate', '!recovery', '!conflict', '!error', '!deletionNotice', '!storageFailed', 'cleanupPendingCount === 0']) assert(gate.includes(marker), marker);
+  for (const marker of ["tab === 'writing'", '!!chapter', '!d.candidate', '!recovery', '!conflict', '!deletionNotice', '!storageFailed', 'cleanupPendingCount === 0']) assert(gate.includes(marker), marker);
   assert(source.includes("className: 'mx-root' + (writingLayout ? ' mx-root-writing' : '')"));
   assert(css.includes('@media(max-height:640px){.mx-root-writing .mx-content-pane{display:block}'));
   assert(!css.includes('.mx-root.mx-root-writing{display:block'));
@@ -97,7 +96,7 @@ test('non-writing tabs, recovery/error flows and short viewports retain an acces
   assert(rule('.mx-writing-column').includes('overflow:auto'));
   assert(rule('.mx-editor-panel').includes('min-height:20rem'), 'Crowded control budgets cannot zero the editor; allocated column scrolls instead');
   assert(!css.includes('.mx-compact-tools'));
-  assert(source.includes("h('div', { id: formId.current, className: 'mx-writing-host' }, renderCurrentPage())"));
+  assert(source.includes("h('div', { id: formId.current, ref: findPageRef, className: 'mx-writing-host' }, renderCurrentPage())"));
   assert(source.includes("recovery && h('section'"));
   assert(source.includes('renderConflict()'));
 });

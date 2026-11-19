@@ -87,6 +87,15 @@ test('a malformed success response does not clear the title draft or allow a ret
   assert.equal(requests, 1);
 });
 
+test('chapter name field and add button share a non-wrapping row aligned at the input baseline', () => {
+  const form = section("h('div', { className: 'mx-chapter-add-row'", "h('p', { className: 'mx-hint' }, t('chapterStructureHint'))");
+  assert.match(form, /h\(Field, \{ label: t\('newChapterTitle'\) \}, h\('input', \{ ref: addChapterInputRef/);
+  assert.match(form, /button\(t\('addChapter'\), addChapter, \{ disabled: disabled \|\| !newChapter\.trim\(\)/);
+  assert.doesNotMatch(form, /mx-grow|mx-actions/);
+  assert.match(source, /\.mx-chapter-add-row\{display:grid;grid-template-columns:minmax\(0,1fr\) auto;align-items:end;/);
+  assert.match(source, /\.mx-chapter-add-row>\.mx-field>input[^,{]*,\.mx-root \.mx-chapter-add-row>button\{height:40px;min-height:40px\}/);
+});
+
 test('there is one add form, and both explicit rebase and autosave reconciliation guard against missing chapter identities', () => {
   assert.doesNotMatch(section('          const renderBookTools =', '          const renderChapterManagement ='), /addChapterInputRef/);
   assert.match(section('          const renderChapterManagement =', '          const renderContextPage ='), /ref: addChapterInputRef/);

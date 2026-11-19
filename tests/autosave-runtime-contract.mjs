@@ -32,6 +32,7 @@ const mutants = {
   'retry-after-error': () => mutateOnce('schedule() { if (disposed || halted) return; clear(); due = false;', 'schedule() { if (disposed) return; halted = false; clear(); due = false;'),
   'auto-accept-candidate': () => mutateOnce('      return null;\n    }\n    function autosaveOperationApplied', "      if (dirty(w).candidate) return { kind: 'candidate', operation: { action: 'acceptProposal', proposalId: w.candidateId } };\n      return null;\n    }\n    function autosaveOperationApplied"),
   'drop-pending-undo-journal': () => mutateOnce('function autosaveRecoveryWorkspace(w, pending) {', 'function autosaveRecoveryWorkspace(w, pending) { return w;'),
+  'force-save-from-find': () => mutateOnce("!isFindControl(e.target) && !isFindControl(e.relatedTarget) && ['INPUT', 'TEXTAREA', 'SELECT']", "['INPUT', 'TEXTAREA', 'SELECT']"),
   'regenerate-recovery-card-id': () => mutateOnce('if (!pendingCard || pendingCard.bookId !== snapshot.book.id || cardScope !== snapshot.baseCard) {', 'if (true || !pendingCard || pendingCard.bookId !== snapshot.book.id || cardScope !== snapshot.baseCard) {'),
   'discard-category-recovery': () => mutateOnce("if (p.card && Object.hasOwn(p.card, 'categoryId')) keys.push('categoryId');", ''),
   'category-changes-context-kind': () => mutateOnce('return { ...card, categoryId: category || null };', 'return { ...card, categoryId: category || null, kind: cardKinds.includes(category) ? category : card.kind };'),
@@ -188,8 +189,9 @@ function appUi(book) {
     const update=transaction(current.current.constraintsEditor.text,text,{beforeVersion:viewVersion,origin:'input.structure',payload});
     if(!h.app.changeConstraintsMarkdown(book.id,update))return false; viewVersion=update.version; return true;
   }}};
-  h.events = new Function('env', 'with(env) { return { ' + sourceRange('            onCompositionStartCapture:', '            onKeyDown:') + ' }; }')(env);
-  const retryProperty = clientSource.match(/button\(t\('autosaveRetry'\), saveAll, \{ disabled: ([^}]+) \}\)/); assert(retryProperty);
+  h.events = new Function('env', 'with(env) { ' + sourceRange('    const isFindControl =', '    function findShortcut(') +
+    'return { ' + sourceRange('            onCompositionStartCapture:', '            onKeyDown:') + ' }; }')(env);
+  const retryProperty = clientSource.match(/toolbarButton\('save', t\('autosaveRetry'\), saveAll, \{ title: t\('autosavePaused'\), disabled: ([^}]+) \}\)/); assert(retryProperty);
   h.retryDisabled = () => new Function('env', 'with(env) { return (' + retryProperty[1] + '); }')({ ...f, locked: h.busyRef.current || h.flags.loading, w: h.current, anyDirty: f.isDirty(h.current), autosaveRef, conflict: h.conflict });
   Object.defineProperties(h, { controller: { get: () => autosaveRef.current }, current: { get: () => current.current, set: value => { current.current = value; } } });
   allUis.push(h); return h;
@@ -204,6 +206,45 @@ try {
   seed = mutateBook(seed, { action: 'addProposal', proposal: makeProposal(seed, seed.chapters[0].id, options, 'AI候选不能自动接受_7e42', buildContext(seed, seed.chapters[0].id, options)) });
   await activate(seed);
   const initialPreferences = (await post('list')).modelSettings;
+  {
+    const initial = await freshBook('isolated author outline and full draft context'), chapterId = initial.chapters[0].id;
+    const book = await mutate(initial, { action: 'updateChapter', chapterId, patch: { outline: '第一幕\r\n' } });
+    const h = appUi(book), tail = '后半段转折😀' + ' 甲'.repeat(1800) + ' 末尾🧭  ';
+    h.app.changeField('chapter', 'outline', '第一幕\n' + tail);
+    await h.finish();
+    const saved = await get(book), exact = '第一幕\r\n' + tail;
+    assert.equal(saved.chapters[0].outline, exact);
+    assert.equal(saved.chapters[0].body, book.chapters[0].body);
+    assert.deepEqual(saved.chapters[0].history, book.chapters[0].history);
+    assert.deepEqual(h.sent[0].operation, { action: 'updateChapter', chapterId, patch: { outline: exact } });
+    const request = { bookId: book.id, chapterId, mode: 'draft' };
+    const preview = await post('context', request);
+    const block = preview.prompt.split('【本章细纲（完整；严格遵循的创作计划）】\n')[1]?.split('\n\n')[0];
+    assert.deepEqual(JSON.parse(block), { text: exact });
+    assert.equal(preview.report.included.filter(item => item.label === '本章细纲（完整；严格遵循的创作计划）').length, 1);
+    const small = await mutate(saved, { action: 'updateBook', patch: { contextBudget: 1000 } });
+    await assert.rejects(post('generate', { ...request, expectedRevision: small.revision }), { code: 'CONTEXT_BUDGET' });
+    assert.equal(modelCalls, 0, 'An over-budget outline stops before the model');
+    h.dispose();
+  }
+  {
+    const book = await freshBook('find must not force save or pause normal autosave');
+    const h = appUi(book);
+    const search = { tagName: 'INPUT', closest: selector => selector.includes('.mx-find-bar') ? search : null };
+    const editor = { tagName: 'TEXTAREA' };
+    h.app.changeField('chapter', 'body', '作者保留的未保存查找文本');
+    h.events.onBlurCapture({ target: editor, relatedTarget: search });
+    h.events.onBlurCapture({ target: search, relatedTarget: editor });
+    h.events.onCompositionStartCapture({ target: search });
+    assert.equal(h.composing.current, false);
+    h.events.onCompositionEndCapture({ target: search });
+    await h.controller.wait();
+    assert.equal(h.sent.length, 0, 'Focus and IME in the search bar cannot force an HTTP save');
+    await h.finish();
+    assert.equal(h.sent.length, 1, 'The already-scheduled author edit still autosaves normally');
+    assert.equal((await get(book)).chapters[0].body, '作者保留的未保存查找文本');
+    h.dispose();
+  }
   {
     const h = ui(await get(seed)); const originalProposal = structuredClone(seed.proposals[0]);
     h.current = { ...h.current, candidate: '作者尚未确认的候选编辑_41ba' };

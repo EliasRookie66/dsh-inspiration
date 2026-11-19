@@ -61,7 +61,8 @@ test('shared font scale keeps manuscript, Markdown, settings, card and history c
 
 test('writing retains status and disabled reasons while preview is a separate destination', () => {
   const actions = region(source, '          const writingTaskProblem =', '          const pageButton =');
-  for (const token of ['running || awaitingOutcome', "['failed', 'cancelled']", "t('pollError')", "t('retry')", 'notice']) assert(actions.includes(token));
+  for (const token of ['running || awaitingOutcome', "['failed', 'cancelled']", "t('pollError')", "t('retry')"]) assert(actions.includes(token));
+  assert.doesNotMatch(actions, /\bnotice\b/);
   assert.match(actions, /title: taskTitle\('generate', generateProblem\)/);
   assert.doesNotMatch(actions, /toolbarButton\('context'|toolbarButton\('advanced'|contextBusy/);
   assert.match(source, /case 'context': return renderContextPage\(\)/);

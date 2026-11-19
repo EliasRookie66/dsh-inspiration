@@ -8,6 +8,7 @@ export function legacyWorkspaceRegion(source) {
   assert(start >= 0 && end > start);
   let region = source.slice(start, end);
   const additions = [
+    ["b.proposals.filter(p => p.chapterId === id && p.mode !== 'outline')", 'b.proposals.filter(p => p.chapterId === id)'],
     ["    const constraintsEditorDirty = w => !!w?.constraintsEditor && w.constraintsEditor.text !== w.constraintsEditor.baseText;\n", ''],
     ['settings: !equal(w.settings, w.baseSettings) || constraintsEditorDirty(w),', 'settings: !equal(w.settings, w.baseSettings),'],
     [' constraintsEditor: constraintsEditorState(book.writingConstraints),', ''],

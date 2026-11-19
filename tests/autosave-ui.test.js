@@ -261,11 +261,10 @@ test('actual manual edit callback stays unlocked during autosave and schedules o
 test('source wiring omits the header save panel but retains error recovery, IME/blur, poll deferral and immediate cancel', () => {
   const header = source.slice(source.indexOf("          const renderTopbar ="), source.indexOf("          return h('main'"));
   for (const forbidden of ["t('autosaveHint')", "button(t('saveNow')", "button(t('discard')", 'mx-save-controls']) assert(!header.includes(forbidden));
-  const errors = source.slice(source.indexOf("          error &&"), source.indexOf("          h('div', { ref: contentRef"));
-  assert(errors.includes("button(t('autosaveRetry'), saveAll"));
+  assert.match(header, /w && autosaveRef\.current\?\.failed && toolbarButton\('save', t\('autosaveRetry'\), saveAll/);
   assert(!header.includes('w && anyDirty')); assert(!header.includes("t('unsaved')")); assert(!header.includes("status("));
   assert(source.includes('onCompositionStartCapture:')); assert(source.includes('onCompositionEndCapture:'));
-  assert(source.includes("onBlurCapture: e => { if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) void autosaveRef.current.flush(); }"));
+  assert(source.includes("onBlurCapture: e => { if (!isFindControl(e.target) && !isFindControl(e.relatedTarget) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) void autosaveRef.current.flush(); }"));
   assert(source.includes('if (busyRef.current || autosaveRef.current?.running) { queueLatest(book); return; }'));
   assert(source.includes('if (busyRef.current || autosaveRef.current?.running) queueLatest(latest);'));
   assert.equal((source.match(/rememberJob\(result\); setPollVersion\(v => v \+ 1\); } }, false\)/g) || []).length, 1, 'One immediate cancel path serves both toolbar states');

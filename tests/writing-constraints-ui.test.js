@@ -138,7 +138,7 @@ test('actual Save all uses existing updateBook patch and sequential CAS, then re
   const h = saveHarness(w);
   assert.equal(await h.save(), true);
   assert.deepEqual(h.operations.map(item => item.operation.action), ['updateChapter', 'updateBook']);
-  assert.deepEqual(h.notices, [''], 'Successful explicit saves remain quiet as well as background autosaves');
+  assert.deepEqual(h.notices, [], 'Successful explicit saves remain quiet as well as background autosaves');
   assert.equal(h.operations[1].expectedRevision, h.operations[0].expectedRevision + 1);
   assert.deepEqual(h.operations[1].operation.patch, { writingConstraints: w.settings.writingConstraints });
   assert.equal(f.isDirty(h.current.current), false);
