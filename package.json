@@ -1,6 +1,6 @@
 {
   "name": "@ycx/dsh-inspiration",
-  "version": "0.4.13",
+  "version": "0.4.14",
   "description": "inspiration: a writing-first long-fiction workbench with author-approved AI drafts and precise selection polishing.",
   "private": true,
   "repository": { "type": "git", "url": "git+https://github.com/EliasRookie66/dsh-inspiration.git" },
@@ -9,7 +9,7 @@
   "keywords": ["dsh-plugin", "deepseek-harness", "fiction", "writing", "ai-writing"],
   "type": "module",
   "license": "MIT",
-  "engines": { "dsh": "0.2.2-rc.3", "node": ">=22" },
+  "engines": { "dsh": "0.2.2-rc.3 || 0.2.2-rc.5", "node": ">=22" },
   "exports": {
     ".": "./index.js",
     "./client": "./client.bundle.js",
@@ -25,8 +25,8 @@
     "check:client-build": "node editor-build/build-client.mjs --check"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "0.2.2-rc.3",
-    "@deepseek-ai/dsh-llm": "0.2.2-rc.3"
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.3 || 0.2.2-rc.5",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.3 || 0.2.2-rc.5"
   },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },

@@ -26,7 +26,7 @@ npm test
 
 ## 安装运行时契约
 
-这些集成脚本要求已安装与清单匹配的 DSH **0.2.2-rc.3**，以及支持同步 `node:module.registerHooks` 的执行器（Node.js >=22.15 或合适的更新运行时）。Desktop 转发契约还依赖已安装 Desktop 的 ASAR 布局及该版本内部实现，不是跨平台浏览器测试。
+这些集成脚本要求已安装与清单匹配的 DSH **0.2.2-rc.3** 或 **0.2.2-rc.5**，以及支持同步 `node:module.registerHooks` 的执行器（Node.js >=22.15 或合适的更新运行时）。Desktop 转发契约还依赖已安装 Desktop 的 ASAR 布局及该版本内部实现，不是跨平台浏览器测试。
 
 请由运行 DSH 的环境提供：
 

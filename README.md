@@ -1,6 +1,6 @@
 # 灵感 inspiration
 
-**当前版本：v0.4.13**。设定卡页面采用紧凑列表，支持按作品新建分类、筛选和调整归类。已保存作品无需迁移。
+**当前版本：v0.4.14**。新增对 DSH `0.2.2-rc.5` 的支持，仍兼容 `0.2.2-rc.3`。已保存的作品无需迁移。
 
 A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precise selection polishing, and author-approved inline edits.
 
@@ -10,16 +10,16 @@ A writing-first fiction workbench for DeepSeek Harness, with AI drafting, precis
 
 ## 安装与兼容性
 
-安装 **v0.4.13** 请选择 GitHub Release 的预构建包或固定版本标签。源码及可运行浏览器产物也可从 [开发分支 `feat/writing-constraints`](https://github.com/EliasRookie66/dsh-inspiration/tree/feat/writing-constraints) 获取。不要直接将含写作约束的作品数据交给更早的 `v0.1.0` 读取。
+安装 **v0.4.14** 请选择 GitHub Release 的预构建包或固定版本标签。源码及可运行浏览器产物也可从 [开发分支 `feat/writing-constraints`](https://github.com/EliasRookie66/dsh-inspiration/tree/feat/writing-constraints) 获取。不要直接将含写作约束的作品数据交给更早的 `v0.1.0` 读取。
 
-- 当前支持声明：DSH **0.2.2-rc.3**，Node.js **>=22**。其他 DSH 版本尚未验证，不建议跳过兼容检查。
+- v0.4.14 支持 DSH **0.2.2-rc.3** 与 **0.2.2-rc.5**，Node.js 要求 **>=22**。其他 DSH 版本未验证，不建议跳过兼容检查。
 - 在目标 DSH Web／Desktop 的「插件管理 → 添加插件」中使用：
 
   ```text
-  github:EliasRookie66/dsh-inspiration#v0.4.13
+  github:EliasRookie66/dsh-inspiration#v0.4.14
   ```
 
-- 也可从 [v0.4.13 Release](https://github.com/EliasRookie66/dsh-inspiration/releases/tag/v0.4.13) 下载 [预构建安装包](https://github.com/EliasRookie66/dsh-inspiration/releases/download/v0.4.13/ycx-dsh-inspiration-0.4.13.tgz)，通过宿主支持的包安装入口使用。同一页面提供 `SHA256SUMS` 校验文件。
+- 也可从 [v0.4.14 Release](https://github.com/EliasRookie66/dsh-inspiration/releases/tag/v0.4.14) 下载 [预构建安装包](https://github.com/EliasRookie66/dsh-inspiration/releases/download/v0.4.14/ycx-dsh-inspiration-0.4.14.tgz)，通过宿主支持的包安装入口使用。同一页面提供 `SHA256SUMS` 校验文件。
 - 源码与可运行 JavaScript 均位于仓库根目录，没有安装期构建脚本。是否需要刷新或重新启动，以宿主安装结果为准；先保存当前工作。
 - 本项目尚未发布到 npm；仓库名与包标识 `@ycx/dsh-inspiration` 不必相同。
 
@@ -201,7 +201,7 @@ AI 工具不能调用 `acceptProposal`、`acceptRevisionHunk`、`rejectRevisionH
 
 ## 开发与安装
 
-- 当前目标环境：DSH **0.2.2-rc.3**。清单不放开未经验证的旧版或未来新版。升级 DSH 时须重新核对 API，不能靠跳过兼容检查来保证安全。
+- 当前目标环境：DSH **0.2.2-rc.3** 或 **0.2.2-rc.5**。清单只声明已验证的版本，不跳过兼容检查；升级 DSH 时须重新核对 API。
 - 用 DSH Plugin Manager 安装此本地目录。目录安装链接源码，**不要移动/删除该目录**；不需要构建脚本或编译步骤。
 - Client 是原生 ModuleLoader 插件，以 React 和正式 slots 接口挂载，不启动另一台服务器。
 - 本插件未建立开发 watcher；修改源码不代表当前 GUI 立即更新。Host 缓存或替换安装的生效方式以 Plugin Manager 返回的 nextStep 为准；Client 新代码至少需要在当前 GUI 重新加载后核验。

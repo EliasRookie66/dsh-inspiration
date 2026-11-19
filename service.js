@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createBook, mutateBook, validateBook, buildContext, makeProposal, cloneImportedBook, exportMarkdown } from './core.js';
 import { optimizationContext, optimizationRewriteContext, ANALYSIS_LIMIT } from './optimization.js';
 
-export const VERSION = '0.4.13';
+export const VERSION = '0.4.14';
 const ID = /^[a-zA-Z0-9_-]{1,100}$/;
 export function fail(code, message) { throw Object.assign(new Error(message), { code }); }
 function checkId(id) { if (typeof id !== 'string' || !ID.test(id)) fail('VALIDATION', 'Invalid record id / 无效记录编号'); return id; }
